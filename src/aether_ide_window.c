@@ -20,6 +20,7 @@ struct _AetherIdeWindow {
 };
 
 enum {
+    COLUMN_ICON,
     COLUMN_NAME,
     COLUMN_PATH,
     COLUMN_IS_DIR,
@@ -156,9 +157,20 @@ populate_tree_model (GtkTreeStore *store, GtkTreeIter *parent, const gchar *path
 
         gchar *full_path = g_build_filename (path, name, NULL);
         gboolean is_dir = g_file_test (full_path, G_FILE_TEST_IS_DIR);
+        
+        GFile *gfile = g_file_new_for_path (full_path);
+        GFileInfo *info = g_file_query_info (gfile, G_FILE_ATTRIBUTE_STANDARD_ICON, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+        GIcon *icon = NULL;
+        if (info) {
+            icon = g_file_info_get_icon (info);
+        }
+
         GtkTreeIter iter;
         gtk_tree_store_append (store, &iter, parent);
-        gtk_tree_store_set (store, &iter, COLUMN_NAME, name, COLUMN_PATH, full_path, COLUMN_IS_DIR, is_dir, -1);
+        gtk_tree_store_set (store, &iter, COLUMN_ICON, icon, COLUMN_NAME, name, COLUMN_PATH, full_path, COLUMN_IS_DIR, is_dir, -1);
+
+        if (info) g_object_unref (info);
+        g_object_unref (gfile);
 
         if (is_dir) {
             populate_tree_model (store, &iter, full_path);
@@ -180,10 +192,15 @@ on_tree_row_activated (GtkTreeView *tree_view, GtkTreePath *path, GtkTreeViewCol
         
         if (!is_dir && g_file_test (filepath, G_FILE_TEST_IS_REGULAR)) {
             gchar *content = NULL;
-            if (g_file_get_contents (filepath, &content, NULL, NULL)) {
-                gchar *basename = g_path_get_basename (filepath);
-                create_editor_tab (self, basename, filepath, content);
-                g_free (basename);
+            gsize length;
+            if (g_file_get_contents (filepath, &content, &length, NULL)) {
+                if (g_utf8_validate (content, length, NULL)) {
+                    gchar *basename = g_path_get_basename (filepath);
+                    create_editor_tab (self, basename, filepath, content);
+                    g_free (basename);
+                } else {
+                    g_printerr ("Cannot open binary or non-UTF8 file: %s\n", filepath);
+                }
                 g_free (content);
             }
         } else if (is_dir) {
@@ -377,7 +394,7 @@ aether_ide_window_init (AetherIdeWindow *self)
     GtkWidget *sidebar_label = gtk_label_new ("Explorer");
     gtk_box_pack_start (GTK_BOX (self->sidebar_box), sidebar_label, FALSE, FALSE, 10);
     
-    self->tree_store = gtk_tree_store_new (NUM_COLUMNS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
+    self->tree_store = gtk_tree_store_new (NUM_COLUMNS, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
     gtk_tree_sortable_set_sort_func (GTK_TREE_SORTABLE (self->tree_store), COLUMN_NAME, sort_tree_func, NULL, NULL);
     gtk_tree_sortable_set_sort_column_id (GTK_TREE_SORTABLE (self->tree_store), COLUMN_NAME, GTK_SORT_ASCENDING);
     
@@ -386,8 +403,16 @@ aether_ide_window_init (AetherIdeWindow *self)
     
     gtk_tree_view_set_activate_on_single_click (GTK_TREE_VIEW (self->tree_view), TRUE);
     
-    GtkCellRenderer *renderer = gtk_cell_renderer_text_new ();
-    GtkTreeViewColumn *column = gtk_tree_view_column_new_with_attributes ("File", renderer, "text", COLUMN_NAME, NULL);
+    GtkTreeViewColumn *column = gtk_tree_view_column_new ();
+    
+    GtkCellRenderer *icon_renderer = gtk_cell_renderer_pixbuf_new ();
+    gtk_tree_view_column_pack_start (column, icon_renderer, FALSE);
+    gtk_tree_view_column_add_attribute (column, icon_renderer, "gicon", COLUMN_ICON);
+    
+    GtkCellRenderer *text_renderer = gtk_cell_renderer_text_new ();
+    gtk_tree_view_column_pack_start (column, text_renderer, TRUE);
+    gtk_tree_view_column_add_attribute (column, text_renderer, "text", COLUMN_NAME);
+    
     gtk_tree_view_append_column (GTK_TREE_VIEW (self->tree_view), column);
     gtk_tree_view_set_headers_visible (GTK_TREE_VIEW (self->tree_view), FALSE);
     
