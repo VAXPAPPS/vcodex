@@ -212,17 +212,35 @@ on_tree_row_activated (GtkTreeView *tree_view, GtkTreePath *path, GtkTreeViewCol
         gtk_tree_model_get (model, &iter, COLUMN_PATH, &filepath, COLUMN_IS_DIR, &is_dir, -1);
         
         if (!is_dir && g_file_test (filepath, G_FILE_TEST_IS_REGULAR)) {
-            gchar *content = NULL;
-            gsize length;
-            if (g_file_get_contents (filepath, &content, &length, NULL)) {
-                if (g_utf8_validate (content, length, NULL)) {
-                    gchar *basename = g_path_get_basename (filepath);
-                    create_editor_tab (self, basename, filepath, content);
-                    g_free (basename);
-                } else {
-                    g_printerr ("Cannot open binary or non-UTF8 file: %s\n", filepath);
+            gboolean already_open = FALSE;
+            gint num_pages = gtk_notebook_get_n_pages (GTK_NOTEBOOK (self->notebook));
+            
+            for (gint i = 0; i < num_pages; i++) {
+                GtkWidget *page = gtk_notebook_get_nth_page (GTK_NOTEBOOK (self->notebook), i);
+                GtkWidget *source_view = gtk_bin_get_child (GTK_BIN (page));
+                if (source_view && GTK_SOURCE_IS_VIEW (source_view)) {
+                    const gchar *open_filepath = g_object_get_data (G_OBJECT (source_view), "filepath");
+                    if (g_strcmp0 (open_filepath, filepath) == 0) {
+                        gtk_notebook_set_current_page (GTK_NOTEBOOK (self->notebook), i);
+                        already_open = TRUE;
+                        break;
+                    }
                 }
-                g_free (content);
+            }
+            
+            if (!already_open) {
+                gchar *content = NULL;
+                gsize length;
+                if (g_file_get_contents (filepath, &content, &length, NULL)) {
+                    if (g_utf8_validate (content, length, NULL)) {
+                        gchar *basename = g_path_get_basename (filepath);
+                        create_editor_tab (self, basename, filepath, content);
+                        g_free (basename);
+                    } else {
+                        g_printerr ("Cannot open binary or non-UTF8 file: %s\n", filepath);
+                    }
+                    g_free (content);
+                }
             }
         } else if (is_dir) {
             // Toggle folder expansion on single click
