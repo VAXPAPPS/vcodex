@@ -277,6 +277,57 @@ on_open_folder_clicked (GtkButton *button, AetherIdeWindow *self)
 }
 
 static void
+do_terminal_copy (GtkWidget *item, VteTerminal *terminal)
+{
+    vte_terminal_copy_clipboard_format (terminal, VTE_FORMAT_TEXT);
+}
+
+static void
+do_terminal_paste (GtkWidget *item, VteTerminal *terminal)
+{
+    vte_terminal_paste_clipboard (terminal);
+}
+
+static gboolean
+on_terminal_button_press (GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+    if (event->type == GDK_BUTTON_PRESS && event->button == 3) {
+        GtkWidget *menu = gtk_menu_new ();
+        
+        GtkWidget *copy_item = gtk_menu_item_new_with_label ("Copy (Ctrl+Shift+C)");
+        g_signal_connect (copy_item, "activate", G_CALLBACK (do_terminal_copy), widget);
+        gtk_menu_shell_append (GTK_MENU_SHELL (menu), copy_item);
+        
+        GtkWidget *paste_item = gtk_menu_item_new_with_label ("Paste (Ctrl+Shift+V)");
+        g_signal_connect (paste_item, "activate", G_CALLBACK (do_terminal_paste), widget);
+        gtk_menu_shell_append (GTK_MENU_SHELL (menu), paste_item);
+        
+        gtk_widget_show_all (menu);
+        gtk_menu_popup_at_pointer (GTK_MENU (menu), (GdkEvent *) event);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
+on_terminal_key_press (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
+{
+    VteTerminal *terminal = VTE_TERMINAL (widget);
+    guint modifiers = event->state & gtk_accelerator_get_default_mod_mask();
+    
+    if (modifiers == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) {
+        if (event->keyval == GDK_KEY_C || event->keyval == GDK_KEY_c) {
+            vte_terminal_copy_clipboard_format (terminal, VTE_FORMAT_TEXT);
+            return TRUE;
+        } else if (event->keyval == GDK_KEY_V || event->keyval == GDK_KEY_v) {
+            vte_terminal_paste_clipboard (terminal);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static void
 aether_ide_window_class_init (AetherIdeWindowClass *class)
 {
 }
@@ -710,6 +761,9 @@ aether_ide_window_init (AetherIdeWindow *self)
     self->terminal = vte_terminal_new ();
     GdkRGBA bg_color = {0.0, 0.0, 0.0, 0.0};
     vte_terminal_set_color_background (VTE_TERMINAL (self->terminal), &bg_color);
+    
+    g_signal_connect (self->terminal, "key-press-event", G_CALLBACK (on_terminal_key_press), self);
+    g_signal_connect (self->terminal, "button-press-event", G_CALLBACK (on_terminal_button_press), self);
     
     gchar **envp = g_get_environ ();
     gchar **command = g_new0 (gchar *, 2);
