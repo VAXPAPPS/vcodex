@@ -1,18 +1,18 @@
-aether_ide_sources = [
+vcodex_sources = [
   'main.c',
-  'aether_ide_window.c',
+  'vcodex_window.c',
   'lsp_client.c'
 ]
 
-aether_ide_deps = [
+vcodex_deps = [
   gtk_dep,
   gtksourceview_dep,
   gio_dep,
   vte_dep
 ]
 
-executable('aether-ide',
-  aether_ide_sources,
-  dependencies: aether_ide_deps,
+executable('vcodex',
+  vcodex_sources,
+  dependencies: vcodex_deps,
   install: true
 )

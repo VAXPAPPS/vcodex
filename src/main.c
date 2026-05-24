@@ -1,11 +1,11 @@
 #include <gtk/gtk.h>
-#include "aether_ide_window.h"
+#include "vcodex_window.h"
 
 static void
 on_activate (GtkApplication *app, gpointer user_data)
 {
     g_object_set (gtk_settings_get_default (), "gtk-application-prefer-dark-theme", TRUE, NULL);
-    AetherIdeWindow *window = aether_ide_window_new (app);
+    AetherIdeWindow *window = vcodex_window_new (app);
     gtk_window_present (GTK_WINDOW (window));
 }
 

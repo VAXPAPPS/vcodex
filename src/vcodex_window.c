@@ -1,4 +1,4 @@
-#include "aether_ide_window.h"
+#include "vcodex_window.h"
 #include <vte/vte.h>
 
 struct _AetherIdeWindow {
@@ -48,7 +48,7 @@ enum {
     NUM_SEARCH_COLUMNS
 };
 
-G_DEFINE_TYPE (AetherIdeWindow, aether_ide_window, GTK_TYPE_APPLICATION_WINDOW)
+G_DEFINE_TYPE (AetherIdeWindow, vcodex_window, GTK_TYPE_APPLICATION_WINDOW)
 
 static void
 on_tab_close_clicked (GtkButton *button, GtkWidget *scroll)
@@ -328,7 +328,7 @@ on_terminal_key_press (GtkWidget *widget, GdkEventKey *event, gpointer user_data
 }
 
 static void
-aether_ide_window_class_init (AetherIdeWindowClass *class)
+vcodex_window_class_init (AetherIdeWindowClass *class)
 {
 }
 
@@ -578,7 +578,7 @@ on_search_row_activated (GtkTreeView *tree_view, GtkTreePath *path, GtkTreeViewC
 }
 
 static void
-aether_ide_window_init (AetherIdeWindow *self)
+vcodex_window_init (AetherIdeWindow *self)
 {
     // Apply transparent theme
     apply_transparent_theme (GTK_WIDGET (self));
@@ -793,7 +793,7 @@ aether_ide_window_init (AetherIdeWindow *self)
 }
 
 AetherIdeWindow *
-aether_ide_window_new (GtkApplication *app)
+vcodex_window_new (GtkApplication *app)
 {
     return g_object_new (AETHER_TYPE_IDE_WINDOW, "application", app, NULL);
 }
