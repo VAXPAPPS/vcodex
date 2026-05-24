@@ -22,6 +22,7 @@ struct _AetherIdeWindow {
 enum {
     COLUMN_NAME,
     COLUMN_PATH,
+    COLUMN_IS_DIR,
     NUM_COLUMNS
 };
 
@@ -130,11 +131,12 @@ populate_tree_model (GtkTreeStore *store, GtkTreeIter *parent, const gchar *path
         if (name[0] == '.') continue;
 
         gchar *full_path = g_build_filename (path, name, NULL);
+        gboolean is_dir = g_file_test (full_path, G_FILE_TEST_IS_DIR);
         GtkTreeIter iter;
         gtk_tree_store_append (store, &iter, parent);
-        gtk_tree_store_set (store, &iter, COLUMN_NAME, name, COLUMN_PATH, full_path, -1);
+        gtk_tree_store_set (store, &iter, COLUMN_NAME, name, COLUMN_PATH, full_path, COLUMN_IS_DIR, is_dir, -1);
 
-        if (g_file_test (full_path, G_FILE_TEST_IS_DIR)) {
+        if (is_dir) {
             populate_tree_model (store, &iter, full_path);
         }
         g_free (full_path);
@@ -186,6 +188,30 @@ on_open_folder_clicked (GtkButton *button, AetherIdeWindow *self)
 static void
 aether_ide_window_class_init (AetherIdeWindowClass *class)
 {
+}
+
+static gint
+sort_tree_func (GtkTreeModel *model, GtkTreeIter *a, GtkTreeIter *b, gpointer user_data)
+{
+    gboolean is_dir_a, is_dir_b;
+    gchar *name_a, *name_b;
+    gtk_tree_model_get (model, a, COLUMN_IS_DIR, &is_dir_a, COLUMN_NAME, &name_a, -1);
+    gtk_tree_model_get (model, b, COLUMN_IS_DIR, &is_dir_b, COLUMN_NAME, &name_b, -1);
+
+    gint ret = 0;
+    if (is_dir_a && !is_dir_b) {
+        ret = -1;
+    } else if (!is_dir_a && is_dir_b) {
+        ret = 1;
+    } else {
+        if (name_a && name_b) {
+            ret = g_ascii_strcasecmp (name_a, name_b);
+        }
+    }
+
+    g_free (name_a);
+    g_free (name_b);
+    return ret;
 }
 
 static void
@@ -275,7 +301,10 @@ aether_ide_window_init (AetherIdeWindow *self)
     GtkWidget *sidebar_label = gtk_label_new ("Explorer");
     gtk_box_pack_start (GTK_BOX (self->sidebar_box), sidebar_label, FALSE, FALSE, 10);
     
-    self->tree_store = gtk_tree_store_new (NUM_COLUMNS, G_TYPE_STRING, G_TYPE_STRING);
+    self->tree_store = gtk_tree_store_new (NUM_COLUMNS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
+    gtk_tree_sortable_set_sort_func (GTK_TREE_SORTABLE (self->tree_store), COLUMN_NAME, sort_tree_func, NULL, NULL);
+    gtk_tree_sortable_set_sort_column_id (GTK_TREE_SORTABLE (self->tree_store), COLUMN_NAME, GTK_SORT_ASCENDING);
+    
     self->tree_view = gtk_tree_view_new_with_model (GTK_TREE_MODEL (self->tree_store));
     g_object_unref (self->tree_store);
     
