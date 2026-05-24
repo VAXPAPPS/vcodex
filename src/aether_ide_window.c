@@ -584,7 +584,8 @@ aether_ide_window_init (AetherIdeWindow *self)
     gtk_paned_pack1 (GTK_PANED (self->main_paned), self->sidebar_wrapper, FALSE, FALSE);
 
     // Activity Bar
-    self->activity_bar = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+    self->activity_bar = gtk_box_new (GTK_ORIENTATION_VERTICAL, 15);
+    gtk_widget_set_margin_top (self->activity_bar, 10); // Add some margin at the top as well
     GtkStyleContext *act_ctx = gtk_widget_get_style_context (self->activity_bar);
     gtk_style_context_add_class (act_ctx, "activitybar");
     gtk_box_pack_start (GTK_BOX (self->sidebar_wrapper), self->activity_bar, FALSE, FALSE, 0);
