@@ -695,6 +695,7 @@ aether_ide_window_init (AetherIdeWindow *self)
 
     // Notebook (Tabs)
     self->notebook = gtk_notebook_new ();
+    gtk_notebook_set_scrollable (GTK_NOTEBOOK (self->notebook), TRUE);
     gtk_paned_pack1 (GTK_PANED (self->editor_paned), self->notebook, TRUE, FALSE);
     
     g_signal_connect (self->notebook, "switch-page", G_CALLBACK (on_notebook_switch_page), self);
