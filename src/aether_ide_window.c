@@ -29,6 +29,16 @@ enum {
 G_DEFINE_TYPE (AetherIdeWindow, aether_ide_window, GTK_TYPE_APPLICATION_WINDOW)
 
 static void
+on_tab_close_clicked (GtkButton *button, GtkWidget *scroll)
+{
+    GtkWidget *notebook = gtk_widget_get_parent (scroll);
+    if (GTK_IS_NOTEBOOK (notebook)) {
+        gint page_num = gtk_notebook_page_num (GTK_NOTEBOOK (notebook), scroll);
+        gtk_notebook_remove_page (GTK_NOTEBOOK (notebook), page_num);
+    }
+}
+
+static void
 create_editor_tab (AetherIdeWindow *self, const gchar *title, const gchar *filepath, const gchar *content)
 {
     GtkWidget *scroll = gtk_scrolled_window_new (NULL, NULL);
@@ -68,8 +78,22 @@ create_editor_tab (AetherIdeWindow *self, const gchar *title, const gchar *filep
     gtk_container_add (GTK_CONTAINER (scroll), source_view);
     gtk_widget_show_all (scroll);
     
+    GtkWidget *tab_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 5);
     GtkWidget *tab_label = gtk_label_new (title);
-    gtk_notebook_append_page (GTK_NOTEBOOK (self->notebook), scroll, tab_label);
+    GtkWidget *close_btn = gtk_button_new_from_icon_name ("window-close-symbolic", GTK_ICON_SIZE_MENU);
+    
+    gtk_widget_set_focus_on_click (close_btn, FALSE);
+    GtkStyleContext *context = gtk_widget_get_style_context (close_btn);
+    gtk_style_context_add_class (context, "flat");
+    gtk_style_context_add_class (context, "circular");
+    
+    gtk_box_pack_start (GTK_BOX (tab_box), tab_label, TRUE, TRUE, 0);
+    gtk_box_pack_start (GTK_BOX (tab_box), close_btn, FALSE, FALSE, 0);
+    gtk_widget_show_all (tab_box);
+    
+    gtk_notebook_append_page (GTK_NOTEBOOK (self->notebook), scroll, tab_box);
+    
+    g_signal_connect (close_btn, "clicked", G_CALLBACK (on_tab_close_clicked), scroll);
     
     gint num_pages = gtk_notebook_get_n_pages (GTK_NOTEBOOK (self->notebook));
     gtk_notebook_set_current_page (GTK_NOTEBOOK (self->notebook), num_pages - 1);
@@ -283,6 +307,7 @@ apply_transparent_theme (GtkWidget *widget)
         "notebook tab { background-color: rgba(0, 0, 0, 0.3); } "
         "textview, textview text, textview.view, textview border { background-color: rgba(0,0,0,0); } "
         "treeview, treeview.view { background-color: rgba(0,0,0,0); } "
+        "treeview:selected { background-color: rgba(0, 255, 255, 0.3); color: white; } "
         "headerbar { background-color: rgba(0, 0, 0, 0); border: none; }";
     gtk_css_provider_load_from_data (provider, css, -1, NULL);
     gtk_style_context_add_provider_for_screen (screen,
