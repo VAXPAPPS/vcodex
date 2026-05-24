@@ -12,11 +12,24 @@ struct _AetherIdeWindow {
     GtkWidget *bottom_panel;
     GtkWidget *terminal;
     
+    GtkWidget *sidebar_wrapper;
+    GtkWidget *activity_bar;
+    GtkWidget *sidebar_stack;
+    
+    GtkWidget *explorer_page;
+    GtkWidget *search_page;
+    
     GtkWidget *command_popover;
     GtkWidget *command_entry;
     
+    GtkWidget *sidebar_search_entry;
+    
     GtkWidget *tree_view;
+    GtkWidget *search_results_view;
     GtkTreeStore *tree_store;
+    GtkTreeStore *search_store;
+    
+    gchar *current_workspace_dir;
 };
 
 enum {
@@ -25,6 +38,14 @@ enum {
     COLUMN_PATH,
     COLUMN_IS_DIR,
     NUM_COLUMNS
+};
+
+enum {
+    SEARCH_COL_ICON,
+    SEARCH_COL_TEXT,
+    SEARCH_COL_PATH,
+    SEARCH_COL_LINE,
+    NUM_SEARCH_COLUMNS
 };
 
 G_DEFINE_TYPE (AetherIdeWindow, aether_ide_window, GTK_TYPE_APPLICATION_WINDOW)
@@ -227,6 +248,9 @@ on_open_folder_clicked (GtkButton *button, AetherIdeWindow *self)
 
     if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_ACCEPT) {
         char *folder = gtk_file_chooser_get_filename (GTK_FILE_CHOOSER (dialog));
+        if (self->current_workspace_dir) g_free (self->current_workspace_dir);
+        self->current_workspace_dir = g_strdup (folder);
+        
         gtk_tree_store_clear (self->tree_store);
         populate_tree_model (self->tree_store, NULL, folder);
         g_free (folder);
@@ -325,12 +349,161 @@ apply_transparent_theme (GtkWidget *widget)
         "textview, textview text, textview.view, textview border { background-color: rgba(0,0,0,0); } "
         "treeview, treeview.view { background-color: rgba(0,0,0,0); } "
         "treeview:selected { background-color: rgba(0, 255, 255, 0.3); color: white; } "
+        "activitybar { background-color: rgba(10, 10, 10, 0.8); border-right: 1px solid rgba(255,255,255,0.1); } "
+        "activitybar radio { padding: 10px; border-radius: 0; background-color: transparent; } "
+        "activitybar radio:checked { border-left: 2px solid cyan; } "
         "headerbar { background-color: rgba(0, 0, 0, 0); border: none; }";
     gtk_css_provider_load_from_data (provider, css, -1, NULL);
     gtk_style_context_add_provider_for_screen (screen,
                                                GTK_STYLE_PROVIDER (provider),
                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref (provider);
+}
+
+static void
+on_activity_btn_toggled (GtkToggleButton *button, GtkWidget *page)
+{
+    if (gtk_toggle_button_get_active (button)) {
+        GtkWidget *stack = gtk_widget_get_parent (page);
+        if (GTK_IS_STACK (stack)) {
+            gtk_stack_set_visible_child (GTK_STACK (stack), page);
+        }
+    }
+}
+
+static void
+search_in_files_recursive (const gchar *dir_path, const gchar *query, GtkTreeStore *store)
+{
+    GDir *dir = g_dir_open (dir_path, 0, NULL);
+    if (!dir) return;
+
+    const gchar *name;
+    while ((name = g_dir_read_name (dir)) != NULL) {
+        if (name[0] == '.') continue; // Skip hidden
+        
+        gchar *full_path = g_build_filename (dir_path, name, NULL);
+        if (g_file_test (full_path, G_FILE_TEST_IS_DIR)) {
+            search_in_files_recursive (full_path, query, store);
+        } else if (g_file_test (full_path, G_FILE_TEST_IS_REGULAR)) {
+            gchar *content = NULL;
+            gsize length;
+            if (g_file_get_contents (full_path, &content, &length, NULL)) {
+                if (g_utf8_validate (content, length, NULL)) {
+                    gchar **lines = g_strsplit (content, "\n", -1);
+                    gboolean file_node_created = FALSE;
+                    GtkTreeIter file_iter;
+                    
+                    for (gint i = 0; lines[i] != NULL; i++) {
+                        if (g_strstr_len (lines[i], -1, query)) {
+                            if (!file_node_created) {
+                                GFile *gfile = g_file_new_for_path (full_path);
+                                GFileInfo *info = g_file_query_info (gfile, G_FILE_ATTRIBUTE_STANDARD_ICON, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+                                GIcon *icon = NULL;
+                                if (info) icon = g_file_info_get_icon (info);
+                                
+                                gtk_tree_store_append (store, &file_iter, NULL);
+                                gtk_tree_store_set (store, &file_iter, 
+                                    SEARCH_COL_ICON, icon, 
+                                    SEARCH_COL_TEXT, name, 
+                                    SEARCH_COL_PATH, full_path, 
+                                    SEARCH_COL_LINE, -1, -1);
+                                    
+                                if (info) g_object_unref (info);
+                                g_object_unref (gfile);
+                                file_node_created = TRUE;
+                            }
+                            gchar *chugged = g_strchug (g_strdup (lines[i]));
+                            gchar *snippet = g_strdup_printf ("%d: %s", i + 1, chugged);
+                            GtkTreeIter line_iter;
+                            gtk_tree_store_append (store, &line_iter, &file_iter);
+                            gtk_tree_store_set (store, &line_iter, 
+                                SEARCH_COL_ICON, NULL, 
+                                SEARCH_COL_TEXT, snippet, 
+                                SEARCH_COL_PATH, full_path, 
+                                SEARCH_COL_LINE, i, -1);
+                            g_free (snippet);
+                            g_free (chugged);
+                        }
+                    }
+                    g_strfreev (lines);
+                }
+                g_free (content);
+            }
+        }
+        g_free (full_path);
+    }
+    g_dir_close (dir);
+}
+
+static void
+on_sidebar_search_changed (GtkSearchEntry *entry, AetherIdeWindow *self)
+{
+    gtk_tree_store_clear (self->search_store);
+    const gchar *query = gtk_entry_get_text (GTK_ENTRY (entry));
+    if (query && query[0] != '\0' && self->current_workspace_dir) {
+        search_in_files_recursive (self->current_workspace_dir, query, self->search_store);
+        gtk_tree_view_expand_all (GTK_TREE_VIEW (self->search_results_view));
+    }
+}
+
+static void
+on_search_row_activated (GtkTreeView *tree_view, GtkTreePath *path, GtkTreeViewColumn *column, AetherIdeWindow *self)
+{
+    GtkTreeIter iter;
+    GtkTreeModel *model = gtk_tree_view_get_model (tree_view);
+    if (gtk_tree_model_get_iter (model, &iter, path)) {
+        gchar *filepath;
+        gint line_number;
+        gtk_tree_model_get (model, &iter, SEARCH_COL_PATH, &filepath, SEARCH_COL_LINE, &line_number, -1);
+        
+        if (filepath && g_file_test (filepath, G_FILE_TEST_IS_REGULAR)) {
+            gboolean already_open = FALSE;
+            gint num_pages = gtk_notebook_get_n_pages (GTK_NOTEBOOK (self->notebook));
+            GtkWidget *target_source_view = NULL;
+            
+            for (gint i = 0; i < num_pages; i++) {
+                GtkWidget *page = gtk_notebook_get_nth_page (GTK_NOTEBOOK (self->notebook), i);
+                GtkWidget *source_view = gtk_bin_get_child (GTK_BIN (page));
+                if (source_view && GTK_SOURCE_IS_VIEW (source_view)) {
+                    const gchar *open_filepath = g_object_get_data (G_OBJECT (source_view), "filepath");
+                    if (g_strcmp0 (open_filepath, filepath) == 0) {
+                        gtk_notebook_set_current_page (GTK_NOTEBOOK (self->notebook), i);
+                        already_open = TRUE;
+                        target_source_view = source_view;
+                        break;
+                    }
+                }
+            }
+            
+            if (!already_open) {
+                gchar *content = NULL;
+                gsize length;
+                if (g_file_get_contents (filepath, &content, &length, NULL)) {
+                    if (g_utf8_validate (content, length, NULL)) {
+                        gchar *basename = g_path_get_basename (filepath);
+                        create_editor_tab (self, basename, filepath, content);
+                        g_free (basename);
+                        
+                        gint new_page = gtk_notebook_get_current_page (GTK_NOTEBOOK (self->notebook));
+                        GtkWidget *page = gtk_notebook_get_nth_page (GTK_NOTEBOOK (self->notebook), new_page);
+                        target_source_view = gtk_bin_get_child (GTK_BIN (page));
+                    }
+                    g_free (content);
+                }
+            }
+            
+            if (target_source_view && line_number >= 0) {
+                GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (target_source_view));
+                GtkTextIter text_iter;
+                gtk_text_buffer_get_iter_at_line (buffer, &text_iter, line_number);
+                gtk_text_buffer_place_cursor (buffer, &text_iter);
+                gtk_text_view_scroll_to_iter (GTK_TEXT_VIEW (target_source_view), &text_iter, 0.0, TRUE, 0.5, 0.5);
+                
+                gtk_widget_grab_focus (target_source_view);
+            }
+        }
+        g_free (filepath);
+    }
 }
 
 static void
@@ -387,16 +560,69 @@ aether_ide_window_init (AetherIdeWindow *self)
     self->main_paned = gtk_paned_new (GTK_ORIENTATION_HORIZONTAL);
     gtk_container_add (GTK_CONTAINER (self), self->main_paned);
 
-    // Sidebar
-    self->sidebar_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_set_size_request (self->sidebar_box, 200, -1);
+    // Sidebar Wrapper (Activity Bar + Stack)
+    self->sidebar_wrapper = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_size_request (self->sidebar_wrapper, 250, -1);
+    gtk_paned_pack1 (GTK_PANED (self->main_paned), self->sidebar_wrapper, FALSE, FALSE);
+
+    // Activity Bar
+    self->activity_bar = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+    GtkStyleContext *act_ctx = gtk_widget_get_style_context (self->activity_bar);
+    gtk_style_context_add_class (act_ctx, "activitybar");
+    gtk_box_pack_start (GTK_BOX (self->sidebar_wrapper), self->activity_bar, FALSE, FALSE, 0);
+
+    // Sidebar Stack
+    self->sidebar_stack = gtk_stack_new ();
+    gtk_stack_set_transition_type (GTK_STACK (self->sidebar_stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+    gtk_box_pack_start (GTK_BOX (self->sidebar_wrapper), self->sidebar_stack, TRUE, TRUE, 0);
+
+    // Explorer Page
+    self->explorer_page = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget *explorer_label = gtk_label_new ("Explorer");
+    gtk_widget_set_margin_top (explorer_label, 10);
+    gtk_widget_set_margin_bottom (explorer_label, 10);
+    gtk_box_pack_start (GTK_BOX (self->explorer_page), explorer_label, FALSE, FALSE, 0);
     
-    GtkWidget *sidebar_label = gtk_label_new ("Explorer");
-    gtk_box_pack_start (GTK_BOX (self->sidebar_box), sidebar_label, FALSE, FALSE, 10);
+    // Search Page
+    self->search_page = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget *search_label = gtk_label_new ("Search");
+    gtk_widget_set_margin_top (search_label, 10);
+    gtk_widget_set_margin_bottom (search_label, 10);
+    gtk_box_pack_start (GTK_BOX (self->search_page), search_label, FALSE, FALSE, 0);
+    
+    self->sidebar_search_entry = gtk_search_entry_new ();
+    gtk_widget_set_margin_start (self->sidebar_search_entry, 5);
+    gtk_widget_set_margin_end (self->sidebar_search_entry, 5);
+    gtk_widget_set_margin_bottom (self->sidebar_search_entry, 10);
+    gtk_box_pack_start (GTK_BOX (self->search_page), self->sidebar_search_entry, FALSE, FALSE, 0);
+    
+    // Activity Bar Buttons
+    GtkWidget *explorer_btn = gtk_radio_button_new (NULL);
+    gtk_button_set_image (GTK_BUTTON(explorer_btn), gtk_image_new_from_icon_name("folder-symbolic", GTK_ICON_SIZE_LARGE_TOOLBAR));
+    gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON(explorer_btn), FALSE);
+    gtk_style_context_add_class (gtk_widget_get_style_context(explorer_btn), "flat");
+    
+    GtkWidget *search_btn = gtk_radio_button_new_from_widget (GTK_RADIO_BUTTON(explorer_btn));
+    gtk_button_set_image (GTK_BUTTON(search_btn), gtk_image_new_from_icon_name("system-search-symbolic", GTK_ICON_SIZE_LARGE_TOOLBAR));
+    gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON(search_btn), FALSE);
+    gtk_style_context_add_class (gtk_widget_get_style_context(search_btn), "flat");
+
+    gtk_box_pack_start (GTK_BOX (self->activity_bar), explorer_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (self->activity_bar), search_btn, FALSE, FALSE, 0);
+
+    g_signal_connect (explorer_btn, "toggled", G_CALLBACK (on_activity_btn_toggled), self->explorer_page);
+    g_signal_connect (search_btn, "toggled", G_CALLBACK (on_activity_btn_toggled), self->search_page);
+    
+    gtk_stack_add_named (GTK_STACK (self->sidebar_stack), self->explorer_page, "explorer");
+    gtk_stack_add_named (GTK_STACK (self->sidebar_stack), self->search_page, "search");
     
     self->tree_store = gtk_tree_store_new (NUM_COLUMNS, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
     gtk_tree_sortable_set_sort_func (GTK_TREE_SORTABLE (self->tree_store), COLUMN_NAME, sort_tree_func, NULL, NULL);
     gtk_tree_sortable_set_sort_column_id (GTK_TREE_SORTABLE (self->tree_store), COLUMN_NAME, GTK_SORT_ASCENDING);
+    
+    self->search_store = gtk_tree_store_new (NUM_SEARCH_COLUMNS, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT);
+    
+    g_signal_connect (self->sidebar_search_entry, "search-changed", G_CALLBACK (on_sidebar_search_changed), self);
     
     self->tree_view = gtk_tree_view_new_with_model (GTK_TREE_MODEL (self->tree_store));
     g_object_unref (self->tree_store);
@@ -404,15 +630,13 @@ aether_ide_window_init (AetherIdeWindow *self)
     gtk_tree_view_set_activate_on_single_click (GTK_TREE_VIEW (self->tree_view), TRUE);
     
     GtkTreeViewColumn *column = gtk_tree_view_column_new ();
-    
     GtkCellRenderer *icon_renderer = gtk_cell_renderer_pixbuf_new ();
+    g_object_set (icon_renderer, "stock-size", GTK_ICON_SIZE_MENU, NULL);
     gtk_tree_view_column_pack_start (column, icon_renderer, FALSE);
     gtk_tree_view_column_add_attribute (column, icon_renderer, "gicon", COLUMN_ICON);
-    
     GtkCellRenderer *text_renderer = gtk_cell_renderer_text_new ();
     gtk_tree_view_column_pack_start (column, text_renderer, TRUE);
     gtk_tree_view_column_add_attribute (column, text_renderer, "text", COLUMN_NAME);
-    
     gtk_tree_view_append_column (GTK_TREE_VIEW (self->tree_view), column);
     gtk_tree_view_set_headers_visible (GTK_TREE_VIEW (self->tree_view), FALSE);
     
@@ -420,9 +644,29 @@ aether_ide_window_init (AetherIdeWindow *self)
     
     GtkWidget *tree_scroll = gtk_scrolled_window_new (NULL, NULL);
     gtk_container_add (GTK_CONTAINER (tree_scroll), self->tree_view);
-    gtk_box_pack_start (GTK_BOX (self->sidebar_box), tree_scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start (GTK_BOX (self->explorer_page), tree_scroll, TRUE, TRUE, 0);
     
-    gtk_paned_pack1 (GTK_PANED (self->main_paned), self->sidebar_box, FALSE, FALSE);
+    // Search Results View
+    self->search_results_view = gtk_tree_view_new_with_model (GTK_TREE_MODEL (self->search_store));
+    g_object_unref (self->search_store);
+    gtk_tree_view_set_activate_on_single_click (GTK_TREE_VIEW (self->search_results_view), TRUE);
+    
+    GtkTreeViewColumn *search_col = gtk_tree_view_column_new ();
+    GtkCellRenderer *search_icon_renderer = gtk_cell_renderer_pixbuf_new ();
+    g_object_set (search_icon_renderer, "stock-size", GTK_ICON_SIZE_MENU, NULL);
+    gtk_tree_view_column_pack_start (search_col, search_icon_renderer, FALSE);
+    gtk_tree_view_column_add_attribute (search_col, search_icon_renderer, "gicon", SEARCH_COL_ICON);
+    GtkCellRenderer *search_text_renderer = gtk_cell_renderer_text_new ();
+    gtk_tree_view_column_pack_start (search_col, search_text_renderer, TRUE);
+    gtk_tree_view_column_add_attribute (search_col, search_text_renderer, "text", SEARCH_COL_TEXT);
+    gtk_tree_view_append_column (GTK_TREE_VIEW (self->search_results_view), search_col);
+    gtk_tree_view_set_headers_visible (GTK_TREE_VIEW (self->search_results_view), FALSE);
+    
+    g_signal_connect (self->search_results_view, "row-activated", G_CALLBACK (on_search_row_activated), self);
+    
+    GtkWidget *search_scroll = gtk_scrolled_window_new (NULL, NULL);
+    gtk_container_add (GTK_CONTAINER (search_scroll), self->search_results_view);
+    gtk_box_pack_start (GTK_BOX (self->search_page), search_scroll, TRUE, TRUE, 0);
 
     // Editor Paned
     self->editor_paned = gtk_paned_new (GTK_ORIENTATION_VERTICAL);
