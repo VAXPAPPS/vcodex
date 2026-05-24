@@ -151,15 +151,23 @@ on_tree_row_activated (GtkTreeView *tree_view, GtkTreePath *path, GtkTreeViewCol
     GtkTreeModel *model = gtk_tree_view_get_model (tree_view);
     if (gtk_tree_model_get_iter (model, &iter, path)) {
         gchar *filepath;
-        gtk_tree_model_get (model, &iter, COLUMN_PATH, &filepath, -1);
+        gboolean is_dir;
+        gtk_tree_model_get (model, &iter, COLUMN_PATH, &filepath, COLUMN_IS_DIR, &is_dir, -1);
         
-        if (g_file_test (filepath, G_FILE_TEST_IS_REGULAR)) {
+        if (!is_dir && g_file_test (filepath, G_FILE_TEST_IS_REGULAR)) {
             gchar *content = NULL;
             if (g_file_get_contents (filepath, &content, NULL, NULL)) {
                 gchar *basename = g_path_get_basename (filepath);
                 create_editor_tab (self, basename, filepath, content);
                 g_free (basename);
                 g_free (content);
+            }
+        } else if (is_dir) {
+            // Toggle folder expansion on single click
+            if (gtk_tree_view_row_expanded (tree_view, path)) {
+                gtk_tree_view_collapse_row (tree_view, path);
+            } else {
+                gtk_tree_view_expand_row (tree_view, path, FALSE);
             }
         }
         g_free (filepath);
@@ -188,6 +196,49 @@ on_open_folder_clicked (GtkButton *button, AetherIdeWindow *self)
 static void
 aether_ide_window_class_init (AetherIdeWindowClass *class)
 {
+}
+
+static gboolean
+search_tree_recursive (GtkTreeModel *model, GtkTreeIter *iter, const gchar *target, GtkTreeIter *out_iter)
+{
+    do {
+        gchar *path;
+        gtk_tree_model_get (model, iter, COLUMN_PATH, &path, -1);
+        gboolean match = (g_strcmp0 (path, target) == 0);
+        g_free (path);
+        if (match) {
+            *out_iter = *iter;
+            return TRUE;
+        }
+        if (gtk_tree_model_iter_has_child (model, iter)) {
+            GtkTreeIter child;
+            gtk_tree_model_iter_children (model, &child, iter);
+            if (search_tree_recursive (model, &child, target, out_iter)) {
+                return TRUE;
+            }
+        }
+    } while (gtk_tree_model_iter_next (model, iter));
+    return FALSE;
+}
+
+static void
+on_notebook_switch_page (GtkNotebook *notebook, GtkWidget *page, guint page_num, AetherIdeWindow *self)
+{
+    GtkWidget *source_view = gtk_bin_get_child (GTK_BIN (page));
+    if (!source_view || !GTK_SOURCE_IS_VIEW(source_view)) return;
+    
+    const gchar *filepath = g_object_get_data (G_OBJECT (source_view), "filepath");
+    if (!filepath) return;
+
+    GtkTreeIter iter;
+    if (gtk_tree_model_get_iter_first (GTK_TREE_MODEL (self->tree_store), &iter)) {
+        GtkTreeIter result;
+        if (search_tree_recursive (GTK_TREE_MODEL (self->tree_store), &iter, filepath, &result)) {
+            GtkTreePath *path = gtk_tree_model_get_path (GTK_TREE_MODEL (self->tree_store), &result);
+            gtk_tree_view_set_cursor (GTK_TREE_VIEW (self->tree_view), path, NULL, FALSE);
+            gtk_tree_path_free (path);
+        }
+    }
 }
 
 static gint
@@ -308,6 +359,8 @@ aether_ide_window_init (AetherIdeWindow *self)
     self->tree_view = gtk_tree_view_new_with_model (GTK_TREE_MODEL (self->tree_store));
     g_object_unref (self->tree_store);
     
+    gtk_tree_view_set_activate_on_single_click (GTK_TREE_VIEW (self->tree_view), TRUE);
+    
     GtkCellRenderer *renderer = gtk_cell_renderer_text_new ();
     GtkTreeViewColumn *column = gtk_tree_view_column_new_with_attributes ("File", renderer, "text", COLUMN_NAME, NULL);
     gtk_tree_view_append_column (GTK_TREE_VIEW (self->tree_view), column);
@@ -328,6 +381,8 @@ aether_ide_window_init (AetherIdeWindow *self)
     // Notebook (Tabs)
     self->notebook = gtk_notebook_new ();
     gtk_paned_pack1 (GTK_PANED (self->editor_paned), self->notebook, TRUE, FALSE);
+    
+    g_signal_connect (self->notebook, "switch-page", G_CALLBACK (on_notebook_switch_page), self);
 
     // Default empty view for testing
     create_editor_tab (self, "Untitled-1", NULL, NULL);
