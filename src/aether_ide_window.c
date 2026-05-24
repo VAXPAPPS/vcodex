@@ -360,17 +360,19 @@ apply_transparent_theme (GtkWidget *widget)
 
     GtkCssProvider *provider = gtk_css_provider_new ();
     const gchar *css = 
-        "window.background { background-color: rgba(0, 0, 0, 0.3); } "
-        "paned { background-color: transparent; } "
-        "notebook { background-color: transparent; } "
-        "notebook tab { background-color: rgba(0, 0, 0, 0.3); } "
-        "textview, textview text, textview.view, textview border { background-color: rgba(0,0,0,0); } "
-        "treeview, treeview.view { background-color: rgba(0,0,0,0); } "
+        "window.background { background-color: rgba(0, 0, 0, 0.0); } "
+        "paned { background-color: rgba(0, 0, 0, 0.0); } "
+        "notebook { background-color: rgba(0, 0, 0, 0.0); border: none; } "
+        "notebook tab { background-color: rgba(0, 0, 0, 0.0); border: none; } "
+        "notebook stack { background-color: rgba(0, 0, 0, 0.0); } "
+        "scrolledwindow, viewport { background-color: rgba(0, 0, 0, 0.0); border: none; } "
+        "textview, textview text, textview.view, textview border, textview border.left { background-color: rgba(0, 0, 0, 0.0); background: none; } "
+        "treeview, treeview.view { background-color: rgba(0, 0, 0, 0.0); } "
         "treeview:selected { background-color: rgba(0, 255, 255, 0.3); color: white; } "
-        "activitybar { background-color: rgba(10, 10, 10, 0.8); border-right: 1px solid rgba(255,255,255,0.1); } "
-        "activitybar radio { padding: 10px; border-radius: 0; background-color: transparent; } "
+        "activitybar { background-color: rgba(0, 0, 0, 0.0); border-right: 1px solid rgba(255,255,255,0.1); } "
+        "activitybar radio { padding: 10px; border-radius: 0; background-color: rgba(0, 0, 0, 0.0); } "
         "activitybar radio:checked { border-left: 2px solid cyan; } "
-        "headerbar { background-color: rgba(0, 0, 0, 0); border: none; }";
+        "headerbar { background-color: rgba(0, 0, 0, 0.0); border: none; }";
     gtk_css_provider_load_from_data (provider, css, -1, NULL);
     gtk_style_context_add_provider_for_screen (screen,
                                                GTK_STYLE_PROVIDER (provider),
