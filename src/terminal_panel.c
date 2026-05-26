@@ -69,8 +69,28 @@ on_terminal_key_press (GtkWidget *widget, GdkEventKey *event,
 /* Factory                                                              */
 /* ------------------------------------------------------------------ */
 
-GtkWidget *
-terminal_panel_new (void)
+static int terminal_id_counter = 1;
+
+static void
+on_tab_close_clicked (GtkButton *button, GtkWidget *child)
+{
+    GtkWidget *notebook = gtk_widget_get_parent (child);
+    if (GTK_IS_NOTEBOOK (notebook)) {
+        gint page_num = gtk_notebook_page_num (GTK_NOTEBOOK (notebook), child);
+        if (page_num != -1) {
+            gtk_notebook_remove_page (GTK_NOTEBOOK (notebook), page_num);
+        }
+    }
+}
+
+static void
+on_terminal_child_exited (VteTerminal *terminal, gint status, GtkWidget *child)
+{
+    on_tab_close_clicked (NULL, child);
+}
+
+static void
+add_terminal_tab (GtkNotebook *notebook)
 {
     GtkWidget *terminal = vte_terminal_new ();
 
@@ -103,8 +123,57 @@ terminal_panel_new (void)
     g_strfreev (command);
     g_strfreev (envp);
 
-    /* Wrap in a scrolled window and return */
     GtkWidget *scroll = gtk_scrolled_window_new (NULL, NULL);
     gtk_container_add (GTK_CONTAINER (scroll), terminal);
-    return scroll;
+    gtk_widget_show_all (scroll);
+
+    /* Tab label with title and close button */
+    GtkWidget *tab_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 5);
+    gchar *tab_title = g_strdup_printf ("Terminal %d", terminal_id_counter++);
+    GtkWidget *label = gtk_label_new (tab_title);
+    g_free (tab_title);
+    
+    GtkWidget *close_btn = gtk_button_new_from_icon_name ("window-close-symbolic", GTK_ICON_SIZE_MENU);
+    gtk_button_set_relief (GTK_BUTTON (close_btn), GTK_RELIEF_NONE);
+    GtkStyleContext *context = gtk_widget_get_style_context (close_btn);
+    gtk_style_context_add_class (context, "flat");
+    gtk_style_context_add_class (context, "circular");
+    
+    gtk_box_pack_start (GTK_BOX (tab_box), label, TRUE, TRUE, 0);
+    gtk_box_pack_start (GTK_BOX (tab_box), close_btn, FALSE, FALSE, 0);
+    gtk_widget_show_all (tab_box);
+
+    g_signal_connect (close_btn, "clicked", G_CALLBACK (on_tab_close_clicked), scroll);
+    g_signal_connect (terminal, "child-exited", G_CALLBACK (on_terminal_child_exited), scroll);
+
+    gint page_idx = gtk_notebook_append_page (notebook, scroll, tab_box);
+    gtk_notebook_set_tab_reorderable (notebook, scroll, TRUE);
+    gtk_notebook_set_current_page (notebook, page_idx);
+}
+
+static void
+on_add_terminal_clicked (GtkButton *button, GtkNotebook *notebook)
+{
+    add_terminal_tab (notebook);
+}
+
+GtkWidget *
+terminal_panel_new (void)
+{
+    GtkWidget *notebook = gtk_notebook_new ();
+    gtk_notebook_set_scrollable (GTK_NOTEBOOK (notebook), TRUE);
+    gtk_notebook_set_tab_pos (GTK_NOTEBOOK (notebook), GTK_POS_RIGHT);
+    
+    GtkWidget *add_btn = gtk_button_new_from_icon_name ("list-add-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_tooltip_text (add_btn, "New Terminal");
+    gtk_button_set_relief (GTK_BUTTON (add_btn), GTK_RELIEF_NONE);
+    
+    g_signal_connect (add_btn, "clicked", G_CALLBACK (on_add_terminal_clicked), notebook);
+    
+    gtk_notebook_set_action_widget (GTK_NOTEBOOK (notebook), add_btn, GTK_PACK_END);
+    gtk_widget_show_all (add_btn);
+    
+    add_terminal_tab (GTK_NOTEBOOK (notebook));
+    
+    return notebook;
 }
