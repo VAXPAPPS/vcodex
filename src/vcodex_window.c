@@ -18,6 +18,7 @@
 #include "search_panel.h"
 #include "terminal_panel.h"
 #include "explorer_context_menu.h"
+#include "explorer_dnd.h"
 
 /* ------------------------------------------------------------------ */
 /* Struct definition                                                    */
@@ -304,7 +305,11 @@ vcodex_window_init (AetherIdeWindow *self)
     g_signal_connect (self->tree_view, "row-activated",
                       G_CALLBACK (on_tree_row_activated), self);
 
+    gtk_tree_selection_set_mode (gtk_tree_view_get_selection (GTK_TREE_VIEW (self->tree_view)),
+                                 GTK_SELECTION_MULTIPLE);
+
     setup_explorer_context_menu (self->tree_view, self);
+    setup_explorer_dnd (self->tree_view, self);
 
     GtkWidget *tree_scroll = gtk_scrolled_window_new (NULL, NULL);
     gtk_container_add (GTK_CONTAINER (tree_scroll), self->tree_view);
