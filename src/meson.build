@@ -19,8 +19,11 @@ vcodex_deps = [
   vte_dep
 ]
 
+inc = include_directories('../include', '.')
+
 executable('vcodex',
   vcodex_sources,
+  include_directories: inc,
   dependencies: vcodex_deps,
   install: true
 )
