@@ -7,6 +7,7 @@ vcodex_sources = [
   'explorer_dnd.c',
   'search_panel.c',
   'terminal_panel.c',
+  'bottom_panel.c',
   'lsp_client.c'
 ]
 

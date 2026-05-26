@@ -19,6 +19,7 @@
 #include "terminal_panel.h"
 #include "explorer_context_menu.h"
 #include "explorer_dnd.h"
+#include "bottom_panel.h"
 
 /* ------------------------------------------------------------------ */
 /* Struct definition                                                    */
@@ -377,12 +378,12 @@ vcodex_window_init (AetherIdeWindow *self)
 
     create_editor_tab (self, "Untitled-1", NULL, NULL);
 
-    /* ---- Bottom panel (terminal) ---- */
+    /* ---- Bottom panel (terminal & tools) ---- */
     self->bottom_panel = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_size_request (self->bottom_panel, -1, 150);
 
-    GtkWidget *term_scroll = terminal_panel_new ();
-    gtk_box_pack_start (GTK_BOX (self->bottom_panel), term_scroll, TRUE, TRUE, 0);
+    GtkWidget *tools_scroll = bottom_panel_new ();
+    gtk_box_pack_start (GTK_BOX (self->bottom_panel), tools_scroll, TRUE, TRUE, 0);
 
     gtk_paned_pack2 (GTK_PANED (self->editor_paned), self->bottom_panel, FALSE, FALSE);
 
