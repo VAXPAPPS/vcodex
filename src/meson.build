@@ -3,6 +3,7 @@ vcodex_sources = [
   'vcodex_window.c',
   'editor_tab.c',
   'file_explorer.c',
+  'explorer_context_menu.c',
   'search_panel.c',
   'terminal_panel.c',
   'lsp_client.c'
