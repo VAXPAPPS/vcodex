@@ -1,429 +1,136 @@
+/*
+ * vcodex_window.c
+ *
+ * Main window: struct definition, GObject glue, accessor implementations,
+ * UI layout construction, and CSS theming.
+ *
+ * Heavy logic lives in the sub-modules:
+ *   editor_tab.c   — tab creation / open / save
+ *   file_explorer.c — tree-view population and navigation
+ *   search_panel.c — in-project text search
+ *   terminal_panel.c — VTE terminal widget
+ */
+
 #include "vcodex_window.h"
-#include <vte/vte.h>
+#include "vcodex_window_private.h"
+#include "editor_tab.h"
+#include "file_explorer.h"
+#include "search_panel.h"
+#include "terminal_panel.h"
+
+/* ------------------------------------------------------------------ */
+/* Struct definition                                                    */
+/* ------------------------------------------------------------------ */
 
 struct _AetherIdeWindow {
     GtkApplicationWindow parent_instance;
 
     GtkWidget *main_paned;
-    GtkWidget *sidebar_box;
     GtkWidget *editor_paned;
-    
     GtkWidget *notebook;
     GtkWidget *bottom_panel;
-    GtkWidget *terminal;
-    
+
     GtkWidget *sidebar_wrapper;
     GtkWidget *activity_bar;
     GtkWidget *sidebar_stack;
-    
     GtkWidget *explorer_page;
     GtkWidget *search_page;
-    
+
     GtkWidget *command_popover;
     GtkWidget *command_entry;
-    
     GtkWidget *sidebar_search_entry;
-    
-    GtkWidget *tree_view;
-    GtkWidget *search_results_view;
+
+    GtkWidget    *tree_view;
+    GtkWidget    *search_results_view;
     GtkTreeStore *tree_store;
     GtkTreeStore *search_store;
-    
+
     gchar *current_workspace_dir;
-};
-
-enum {
-    COLUMN_ICON,
-    COLUMN_NAME,
-    COLUMN_PATH,
-    COLUMN_IS_DIR,
-    NUM_COLUMNS
-};
-
-enum {
-    SEARCH_COL_ICON,
-    SEARCH_COL_TEXT,
-    SEARCH_COL_PATH,
-    SEARCH_COL_LINE,
-    NUM_SEARCH_COLUMNS
 };
 
 G_DEFINE_TYPE (AetherIdeWindow, vcodex_window, GTK_TYPE_APPLICATION_WINDOW)
 
-static void
-on_tab_close_clicked (GtkButton *button, GtkWidget *scroll)
+/* ------------------------------------------------------------------ */
+/* Private accessors (used by sub-modules via vcodex_window_private.h) */
+/* ------------------------------------------------------------------ */
+
+GtkWidget *
+aether_ide_window_get_notebook (AetherIdeWindow *self)
 {
-    GtkWidget *notebook = gtk_widget_get_parent (scroll);
-    if (GTK_IS_NOTEBOOK (notebook)) {
-        gint page_num = gtk_notebook_page_num (GTK_NOTEBOOK (notebook), scroll);
-        gtk_notebook_remove_page (GTK_NOTEBOOK (notebook), page_num);
-    }
+    return self->notebook;
 }
 
-static void
-create_editor_tab (AetherIdeWindow *self, const gchar *title, const gchar *filepath, const gchar *content)
+GtkTreeStore *
+aether_ide_window_get_tree_store (AetherIdeWindow *self)
 {
-    GtkWidget *scroll = gtk_scrolled_window_new (NULL, NULL);
-    GtkSourceBuffer *buffer = gtk_source_buffer_new (NULL);
-    if (content) {
-        gtk_text_buffer_set_text (GTK_TEXT_BUFFER (buffer), content, -1);
-    }
-    
-    if (filepath) {
-        GtkSourceLanguageManager *lm = gtk_source_language_manager_get_default ();
-        gboolean result_uncertain;
-        gchar *content_type = g_content_type_guess (filepath, NULL, 0, &result_uncertain);
-        GtkSourceLanguage *lang = gtk_source_language_manager_guess_language (lm, filepath, content_type);
-        if (lang) {
-            gtk_source_buffer_set_language (buffer, lang);
-        }
-        g_free (content_type);
-    }
-
-    // GtkSourceStyleSchemeManager *sm = gtk_source_style_scheme_manager_get_default ();
-    // GtkSourceStyleScheme *scheme = gtk_source_style_scheme_manager_get_scheme (sm, "classic");
-    // if (scheme) {
-    //     gtk_source_buffer_set_style_scheme (buffer, scheme);
-    // }
-
-    GtkWidget *source_view = gtk_source_view_new_with_buffer (buffer);
-    gtk_source_view_set_background_pattern (GTK_SOURCE_VIEW (source_view), GTK_SOURCE_BACKGROUND_PATTERN_TYPE_NONE);
-    
-    if (filepath) {
-        g_object_set_data_full (G_OBJECT (source_view), "filepath", g_strdup (filepath), g_free);
-    }
-
-    gtk_source_view_set_show_line_numbers (GTK_SOURCE_VIEW (source_view), TRUE);
-    gtk_source_view_set_highlight_current_line (GTK_SOURCE_VIEW (source_view), FALSE);
-    gtk_source_view_set_auto_indent (GTK_SOURCE_VIEW (source_view), TRUE);
-    
-    gtk_container_add (GTK_CONTAINER (scroll), source_view);
-    gtk_widget_show_all (scroll);
-    
-    GtkWidget *tab_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 5);
-    GtkWidget *tab_label = gtk_label_new (title);
-    GtkWidget *close_btn = gtk_button_new_from_icon_name ("window-close-symbolic", GTK_ICON_SIZE_MENU);
-    
-    gtk_widget_set_focus_on_click (close_btn, FALSE);
-    GtkStyleContext *context = gtk_widget_get_style_context (close_btn);
-    gtk_style_context_add_class (context, "flat");
-    gtk_style_context_add_class (context, "circular");
-    
-    gtk_box_pack_start (GTK_BOX (tab_box), tab_label, TRUE, TRUE, 0);
-    gtk_box_pack_start (GTK_BOX (tab_box), close_btn, FALSE, FALSE, 0);
-    gtk_widget_show_all (tab_box);
-    
-    gtk_notebook_append_page (GTK_NOTEBOOK (self->notebook), scroll, tab_box);
-    
-    g_signal_connect (close_btn, "clicked", G_CALLBACK (on_tab_close_clicked), scroll);
-    
-    gint num_pages = gtk_notebook_get_n_pages (GTK_NOTEBOOK (self->notebook));
-    gtk_notebook_set_current_page (GTK_NOTEBOOK (self->notebook), num_pages - 1);
+    return self->tree_store;
 }
 
-static void
-on_open_clicked (GtkButton *button, AetherIdeWindow *self)
+GtkWidget *
+aether_ide_window_get_tree_view (AetherIdeWindow *self)
 {
-    GtkWidget *dialog = gtk_file_chooser_dialog_new ("Open File",
-                                      GTK_WINDOW (self),
-                                      GTK_FILE_CHOOSER_ACTION_OPEN,
-                                      "_Cancel", GTK_RESPONSE_CANCEL,
-                                      "_Open", GTK_RESPONSE_ACCEPT,
-                                      NULL);
-
-    if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_ACCEPT) {
-        char *filename = gtk_file_chooser_get_filename (GTK_FILE_CHOOSER (dialog));
-        gchar *content = NULL;
-        if (g_file_get_contents (filename, &content, NULL, NULL)) {
-            gchar *basename = g_path_get_basename (filename);
-            create_editor_tab (self, basename, filename, content);
-            g_free (basename);
-            g_free (content);
-        }
-        g_free (filename);
-    }
-    gtk_widget_destroy (dialog);
+    return self->tree_view;
 }
 
-static void
-on_save_clicked (GtkButton *button, AetherIdeWindow *self)
+GtkTreeStore *
+aether_ide_window_get_search_store (AetherIdeWindow *self)
 {
-    gint current_page = gtk_notebook_get_current_page (GTK_NOTEBOOK (self->notebook));
-    if (current_page < 0) return;
-
-    GtkWidget *scroll = gtk_notebook_get_nth_page (GTK_NOTEBOOK (self->notebook), current_page);
-    GtkWidget *source_view = gtk_bin_get_child (GTK_BIN (scroll));
-    
-    const gchar *filepath = g_object_get_data (G_OBJECT (source_view), "filepath");
-    GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (source_view));
-    
-    if (filepath) {
-        GtkTextIter start, end;
-        gtk_text_buffer_get_bounds (buffer, &start, &end);
-        gchar *content = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
-        g_file_set_contents (filepath, content, -1, NULL);
-        g_free (content);
-    }
+    return self->search_store;
 }
 
-static void
-populate_tree_model (GtkTreeStore *store, GtkTreeIter *parent, const gchar *path)
+GtkWidget *
+aether_ide_window_get_search_view (AetherIdeWindow *self)
 {
-    GDir *dir = g_dir_open (path, 0, NULL);
-    if (!dir) return;
-
-    const gchar *name;
-    while ((name = g_dir_read_name (dir)) != NULL) {
-        if (name[0] == '.') continue;
-
-        gchar *full_path = g_build_filename (path, name, NULL);
-        gboolean is_dir = g_file_test (full_path, G_FILE_TEST_IS_DIR);
-        
-        GFile *gfile = g_file_new_for_path (full_path);
-        GFileInfo *info = g_file_query_info (gfile, G_FILE_ATTRIBUTE_STANDARD_ICON, G_FILE_QUERY_INFO_NONE, NULL, NULL);
-        GIcon *icon = NULL;
-        if (info) {
-            icon = g_file_info_get_icon (info);
-        }
-
-        GtkTreeIter iter;
-        gtk_tree_store_append (store, &iter, parent);
-        gtk_tree_store_set (store, &iter, COLUMN_ICON, icon, COLUMN_NAME, name, COLUMN_PATH, full_path, COLUMN_IS_DIR, is_dir, -1);
-
-        if (info) g_object_unref (info);
-        g_object_unref (gfile);
-
-        if (is_dir) {
-            populate_tree_model (store, &iter, full_path);
-        }
-        g_free (full_path);
-    }
-    g_dir_close (dir);
+    return self->search_results_view;
 }
 
-static void
-on_tree_row_activated (GtkTreeView *tree_view, GtkTreePath *path, GtkTreeViewColumn *column, AetherIdeWindow *self)
+const gchar *
+aether_ide_window_get_workspace_dir (AetherIdeWindow *self)
 {
-    GtkTreeIter iter;
-    GtkTreeModel *model = gtk_tree_view_get_model (tree_view);
-    if (gtk_tree_model_get_iter (model, &iter, path)) {
-        gchar *filepath;
-        gboolean is_dir;
-        gtk_tree_model_get (model, &iter, COLUMN_PATH, &filepath, COLUMN_IS_DIR, &is_dir, -1);
-        
-        if (!is_dir && g_file_test (filepath, G_FILE_TEST_IS_REGULAR)) {
-            gboolean already_open = FALSE;
-            gint num_pages = gtk_notebook_get_n_pages (GTK_NOTEBOOK (self->notebook));
-            
-            for (gint i = 0; i < num_pages; i++) {
-                GtkWidget *page = gtk_notebook_get_nth_page (GTK_NOTEBOOK (self->notebook), i);
-                GtkWidget *source_view = gtk_bin_get_child (GTK_BIN (page));
-                if (source_view && GTK_SOURCE_IS_VIEW (source_view)) {
-                    const gchar *open_filepath = g_object_get_data (G_OBJECT (source_view), "filepath");
-                    if (g_strcmp0 (open_filepath, filepath) == 0) {
-                        gtk_notebook_set_current_page (GTK_NOTEBOOK (self->notebook), i);
-                        already_open = TRUE;
-                        break;
-                    }
-                }
-            }
-            
-            if (!already_open) {
-                gchar *content = NULL;
-                gsize length;
-                if (g_file_get_contents (filepath, &content, &length, NULL)) {
-                    if (g_utf8_validate (content, length, NULL)) {
-                        gchar *basename = g_path_get_basename (filepath);
-                        create_editor_tab (self, basename, filepath, content);
-                        g_free (basename);
-                    } else {
-                        g_printerr ("Cannot open binary or non-UTF8 file: %s\n", filepath);
-                    }
-                    g_free (content);
-                }
-            }
-        } else if (is_dir) {
-            // Toggle folder expansion on single click
-            if (gtk_tree_view_row_expanded (tree_view, path)) {
-                gtk_tree_view_collapse_row (tree_view, path);
-            } else {
-                gtk_tree_view_expand_row (tree_view, path, FALSE);
-            }
-        }
-        g_free (filepath);
-    }
+    return self->current_workspace_dir;
 }
 
-static void
-on_open_folder_clicked (GtkButton *button, AetherIdeWindow *self)
+void
+aether_ide_window_set_workspace_dir (AetherIdeWindow *self, const gchar *dir)
 {
-    GtkWidget *dialog = gtk_file_chooser_dialog_new ("Open Folder",
-                                      GTK_WINDOW (self),
-                                      GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-                                      "_Cancel", GTK_RESPONSE_CANCEL,
-                                      "_Open", GTK_RESPONSE_ACCEPT,
-                                      NULL);
-
-    if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_ACCEPT) {
-        char *folder = gtk_file_chooser_get_filename (GTK_FILE_CHOOSER (dialog));
-        if (self->current_workspace_dir) g_free (self->current_workspace_dir);
-        self->current_workspace_dir = g_strdup (folder);
-        
-        gtk_tree_store_clear (self->tree_store);
-        populate_tree_model (self->tree_store, NULL, folder);
-        g_free (folder);
-    }
-    gtk_widget_destroy (dialog);
+    g_free (self->current_workspace_dir);
+    self->current_workspace_dir = g_strdup (dir);
 }
 
-static void
-do_terminal_copy (GtkWidget *item, VteTerminal *terminal)
-{
-    vte_terminal_copy_clipboard_format (terminal, VTE_FORMAT_TEXT);
-}
-
-static void
-do_terminal_paste (GtkWidget *item, VteTerminal *terminal)
-{
-    vte_terminal_paste_clipboard (terminal);
-}
-
-static gboolean
-on_terminal_button_press (GtkWidget *widget, GdkEventButton *event, gpointer user_data)
-{
-    if (event->type == GDK_BUTTON_PRESS && event->button == 3) {
-        GtkWidget *menu = gtk_menu_new ();
-        
-        GtkWidget *copy_item = gtk_menu_item_new_with_label ("Copy (Ctrl+Shift+C)");
-        g_signal_connect (copy_item, "activate", G_CALLBACK (do_terminal_copy), widget);
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), copy_item);
-        
-        GtkWidget *paste_item = gtk_menu_item_new_with_label ("Paste (Ctrl+Shift+V)");
-        g_signal_connect (paste_item, "activate", G_CALLBACK (do_terminal_paste), widget);
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), paste_item);
-        
-        gtk_widget_show_all (menu);
-        gtk_menu_popup_at_pointer (GTK_MENU (menu), (GdkEvent *) event);
-        return TRUE;
-    }
-    return FALSE;
-}
-
-static gboolean
-on_terminal_key_press (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
-{
-    VteTerminal *terminal = VTE_TERMINAL (widget);
-    guint modifiers = event->state & gtk_accelerator_get_default_mod_mask();
-    
-    if (modifiers == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) {
-        if (event->keyval == GDK_KEY_C || event->keyval == GDK_KEY_c) {
-            vte_terminal_copy_clipboard_format (terminal, VTE_FORMAT_TEXT);
-            return TRUE;
-        } else if (event->keyval == GDK_KEY_V || event->keyval == GDK_KEY_v) {
-            vte_terminal_paste_clipboard (terminal);
-            return TRUE;
-        }
-    }
-    return FALSE;
-}
-
-static void
-vcodex_window_class_init (AetherIdeWindowClass *class)
-{
-}
-
-static gboolean
-search_tree_recursive (GtkTreeModel *model, GtkTreeIter *iter, const gchar *target, GtkTreeIter *out_iter)
-{
-    do {
-        gchar *path;
-        gtk_tree_model_get (model, iter, COLUMN_PATH, &path, -1);
-        gboolean match = (g_strcmp0 (path, target) == 0);
-        g_free (path);
-        if (match) {
-            *out_iter = *iter;
-            return TRUE;
-        }
-        if (gtk_tree_model_iter_has_child (model, iter)) {
-            GtkTreeIter child;
-            gtk_tree_model_iter_children (model, &child, iter);
-            if (search_tree_recursive (model, &child, target, out_iter)) {
-                return TRUE;
-            }
-        }
-    } while (gtk_tree_model_iter_next (model, iter));
-    return FALSE;
-}
-
-static void
-on_notebook_switch_page (GtkNotebook *notebook, GtkWidget *page, guint page_num, AetherIdeWindow *self)
-{
-    GtkWidget *source_view = gtk_bin_get_child (GTK_BIN (page));
-    if (!source_view || !GTK_SOURCE_IS_VIEW(source_view)) return;
-    
-    const gchar *filepath = g_object_get_data (G_OBJECT (source_view), "filepath");
-    if (!filepath) return;
-
-    GtkTreeIter iter;
-    if (gtk_tree_model_get_iter_first (GTK_TREE_MODEL (self->tree_store), &iter)) {
-        GtkTreeIter result;
-        if (search_tree_recursive (GTK_TREE_MODEL (self->tree_store), &iter, filepath, &result)) {
-            GtkTreePath *path = gtk_tree_model_get_path (GTK_TREE_MODEL (self->tree_store), &result);
-            gtk_tree_view_set_cursor (GTK_TREE_VIEW (self->tree_view), path, NULL, FALSE);
-            gtk_tree_path_free (path);
-        }
-    }
-}
-
-static gint
-sort_tree_func (GtkTreeModel *model, GtkTreeIter *a, GtkTreeIter *b, gpointer user_data)
-{
-    gboolean is_dir_a, is_dir_b;
-    gchar *name_a, *name_b;
-    gtk_tree_model_get (model, a, COLUMN_IS_DIR, &is_dir_a, COLUMN_NAME, &name_a, -1);
-    gtk_tree_model_get (model, b, COLUMN_IS_DIR, &is_dir_b, COLUMN_NAME, &name_b, -1);
-
-    gint ret = 0;
-    if (is_dir_a && !is_dir_b) {
-        ret = -1;
-    } else if (!is_dir_a && is_dir_b) {
-        ret = 1;
-    } else {
-        if (name_a && name_b) {
-            ret = g_ascii_strcasecmp (name_a, name_b);
-        }
-    }
-
-    g_free (name_a);
-    g_free (name_b);
-    return ret;
-}
+/* ------------------------------------------------------------------ */
+/* CSS / transparency theme                                             */
+/* ------------------------------------------------------------------ */
 
 static void
 apply_transparent_theme (GtkWidget *widget)
 {
     gtk_widget_set_app_paintable (widget, TRUE);
+
     GdkScreen *screen = gtk_widget_get_screen (widget);
     GdkVisual *visual = gdk_screen_get_rgba_visual (screen);
-    if (visual != NULL && gdk_screen_is_composited (screen)) {
+    if (visual && gdk_screen_is_composited (screen))
         gtk_widget_set_visual (widget, visual);
-    }
+
+    static const gchar css[] =
+        "window.background { background-color: rgba(0,0,0,0); }"
+        "paned             { background-color: rgba(0,0,0,0); }"
+        "notebook          { background-color: rgba(0,0,0,0); border: none; }"
+        "notebook tab      { background-color: rgba(0,0,0,0); border: none; }"
+        "notebook stack    { background-color: rgba(0,0,0,0); }"
+        "scrolledwindow, viewport { background-color: rgba(0,0,0,0); border: none; }"
+        "textview, textview text, textview.view,"
+        "textview border, textview border.left"
+        "  { background-color: rgba(0,0,0,0); background: none; }"
+        "treeview, treeview.view { background-color: rgba(0,0,0,0); }"
+        "treeview:selected { background-color: rgba(0,255,255,0.3); color: white; }"
+        "activitybar       { background-color: rgba(0,0,0,0);"
+        "                    border-right: 1px solid rgba(255,255,255,0.1); }"
+        "activitybar radio { padding: 10px; border-radius: 0;"
+        "                    background-color: rgba(0,0,0,0); }"
+        "activitybar radio:checked { border-left: 2px solid cyan; }"
+        "headerbar         { background-color: rgba(0,0,0,0); border: none; }";
 
     GtkCssProvider *provider = gtk_css_provider_new ();
-    const gchar *css = 
-        "window.background { background-color: rgba(0, 0, 0, 0.0); } "
-        "paned { background-color: rgba(0, 0, 0, 0.0); } "
-        "notebook { background-color: rgba(0, 0, 0, 0.0); border: none; } "
-        "notebook tab { background-color: rgba(0, 0, 0, 0.0); border: none; } "
-        "notebook stack { background-color: rgba(0, 0, 0, 0.0); } "
-        "scrolledwindow, viewport { background-color: rgba(0, 0, 0, 0.0); border: none; } "
-        "textview, textview text, textview.view, textview border, textview border.left { background-color: rgba(0, 0, 0, 0.0); background: none; } "
-        "treeview, treeview.view { background-color: rgba(0, 0, 0, 0.0); } "
-        "treeview:selected { background-color: rgba(0, 255, 255, 0.3); color: white; } "
-        "activitybar { background-color: rgba(0, 0, 0, 0.0); border-right: 1px solid rgba(255,255,255,0.1); } "
-        "activitybar radio { padding: 10px; border-radius: 0; background-color: rgba(0, 0, 0, 0.0); } "
-        "activitybar radio:checked { border-left: 2px solid cyan; } "
-        "headerbar { background-color: rgba(0, 0, 0, 0.0); border: none; }";
     gtk_css_provider_load_from_data (provider, css, -1, NULL);
     gtk_style_context_add_provider_for_screen (screen,
                                                GTK_STYLE_PROVIDER (provider),
@@ -431,366 +138,231 @@ apply_transparent_theme (GtkWidget *widget)
     g_object_unref (provider);
 }
 
+/* ------------------------------------------------------------------ */
+/* Activity-bar toggle                                                  */
+/* ------------------------------------------------------------------ */
+
 static void
 on_activity_btn_toggled (GtkToggleButton *button, GtkWidget *page)
 {
-    if (gtk_toggle_button_get_active (button)) {
-        GtkWidget *stack = gtk_widget_get_parent (page);
-        if (GTK_IS_STACK (stack)) {
-            gtk_stack_set_visible_child (GTK_STACK (stack), page);
-        }
-    }
+    if (!gtk_toggle_button_get_active (button)) return;
+    GtkWidget *stack = gtk_widget_get_parent (page);
+    if (GTK_IS_STACK (stack))
+        gtk_stack_set_visible_child (GTK_STACK (stack), page);
 }
+
+/* ------------------------------------------------------------------ */
+/* GObject class init                                                   */
+/* ------------------------------------------------------------------ */
 
 static void
-search_in_files_recursive (const gchar *dir_path, const gchar *query, GtkTreeStore *store)
+vcodex_window_class_init (AetherIdeWindowClass *klass)
 {
-    GDir *dir = g_dir_open (dir_path, 0, NULL);
-    if (!dir) return;
-
-    const gchar *name;
-    while ((name = g_dir_read_name (dir)) != NULL) {
-        if (name[0] == '.') continue; // Skip hidden
-        
-        gchar *full_path = g_build_filename (dir_path, name, NULL);
-        if (g_file_test (full_path, G_FILE_TEST_IS_DIR)) {
-            search_in_files_recursive (full_path, query, store);
-        } else if (g_file_test (full_path, G_FILE_TEST_IS_REGULAR)) {
-            gchar *content = NULL;
-            gsize length;
-            if (g_file_get_contents (full_path, &content, &length, NULL)) {
-                if (g_utf8_validate (content, length, NULL)) {
-                    gchar **lines = g_strsplit (content, "\n", -1);
-                    gboolean file_node_created = FALSE;
-                    GtkTreeIter file_iter;
-                    
-                    for (gint i = 0; lines[i] != NULL; i++) {
-                        if (g_strstr_len (lines[i], -1, query)) {
-                            if (!file_node_created) {
-                                GFile *gfile = g_file_new_for_path (full_path);
-                                GFileInfo *info = g_file_query_info (gfile, G_FILE_ATTRIBUTE_STANDARD_ICON, G_FILE_QUERY_INFO_NONE, NULL, NULL);
-                                GIcon *icon = NULL;
-                                if (info) icon = g_file_info_get_icon (info);
-                                
-                                gtk_tree_store_append (store, &file_iter, NULL);
-                                gtk_tree_store_set (store, &file_iter, 
-                                    SEARCH_COL_ICON, icon, 
-                                    SEARCH_COL_TEXT, name, 
-                                    SEARCH_COL_PATH, full_path, 
-                                    SEARCH_COL_LINE, -1, -1);
-                                    
-                                if (info) g_object_unref (info);
-                                g_object_unref (gfile);
-                                file_node_created = TRUE;
-                            }
-                            gchar *chugged = g_strchug (g_strdup (lines[i]));
-                            gchar *snippet = g_strdup_printf ("%d: %s", i + 1, chugged);
-                            GtkTreeIter line_iter;
-                            gtk_tree_store_append (store, &line_iter, &file_iter);
-                            gtk_tree_store_set (store, &line_iter, 
-                                SEARCH_COL_ICON, NULL, 
-                                SEARCH_COL_TEXT, snippet, 
-                                SEARCH_COL_PATH, full_path, 
-                                SEARCH_COL_LINE, i, -1);
-                            g_free (snippet);
-                            g_free (chugged);
-                        }
-                    }
-                    g_strfreev (lines);
-                }
-                g_free (content);
-            }
-        }
-        g_free (full_path);
-    }
-    g_dir_close (dir);
+    /* Nothing to override for now */
 }
 
-static void
-on_sidebar_search_changed (GtkSearchEntry *entry, AetherIdeWindow *self)
-{
-    gtk_tree_store_clear (self->search_store);
-    const gchar *query = gtk_entry_get_text (GTK_ENTRY (entry));
-    if (query && query[0] != '\0' && self->current_workspace_dir) {
-        search_in_files_recursive (self->current_workspace_dir, query, self->search_store);
-        gtk_tree_view_expand_all (GTK_TREE_VIEW (self->search_results_view));
-    }
-}
-
-static void
-on_search_row_activated (GtkTreeView *tree_view, GtkTreePath *path, GtkTreeViewColumn *column, AetherIdeWindow *self)
-{
-    GtkTreeIter iter;
-    GtkTreeModel *model = gtk_tree_view_get_model (tree_view);
-    if (gtk_tree_model_get_iter (model, &iter, path)) {
-        gchar *filepath;
-        gint line_number;
-        gtk_tree_model_get (model, &iter, SEARCH_COL_PATH, &filepath, SEARCH_COL_LINE, &line_number, -1);
-        
-        if (filepath && g_file_test (filepath, G_FILE_TEST_IS_REGULAR)) {
-            gboolean already_open = FALSE;
-            gint num_pages = gtk_notebook_get_n_pages (GTK_NOTEBOOK (self->notebook));
-            GtkWidget *target_source_view = NULL;
-            
-            for (gint i = 0; i < num_pages; i++) {
-                GtkWidget *page = gtk_notebook_get_nth_page (GTK_NOTEBOOK (self->notebook), i);
-                GtkWidget *source_view = gtk_bin_get_child (GTK_BIN (page));
-                if (source_view && GTK_SOURCE_IS_VIEW (source_view)) {
-                    const gchar *open_filepath = g_object_get_data (G_OBJECT (source_view), "filepath");
-                    if (g_strcmp0 (open_filepath, filepath) == 0) {
-                        gtk_notebook_set_current_page (GTK_NOTEBOOK (self->notebook), i);
-                        already_open = TRUE;
-                        target_source_view = source_view;
-                        break;
-                    }
-                }
-            }
-            
-            if (!already_open) {
-                gchar *content = NULL;
-                gsize length;
-                if (g_file_get_contents (filepath, &content, &length, NULL)) {
-                    if (g_utf8_validate (content, length, NULL)) {
-                        gchar *basename = g_path_get_basename (filepath);
-                        create_editor_tab (self, basename, filepath, content);
-                        g_free (basename);
-                        
-                        gint new_page = gtk_notebook_get_current_page (GTK_NOTEBOOK (self->notebook));
-                        GtkWidget *page = gtk_notebook_get_nth_page (GTK_NOTEBOOK (self->notebook), new_page);
-                        target_source_view = gtk_bin_get_child (GTK_BIN (page));
-                    }
-                    g_free (content);
-                }
-            }
-            
-            if (target_source_view && line_number >= 0) {
-                GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (target_source_view));
-                GtkTextIter text_iter;
-                gtk_text_buffer_get_iter_at_line (buffer, &text_iter, line_number);
-                gtk_text_buffer_place_cursor (buffer, &text_iter);
-                gtk_text_view_scroll_to_iter (GTK_TEXT_VIEW (target_source_view), &text_iter, 0.0, TRUE, 0.5, 0.5);
-                
-                gtk_widget_grab_focus (target_source_view);
-            }
-        }
-        g_free (filepath);
-    }
-}
+/* ------------------------------------------------------------------ */
+/* Window init — assembles the top-level layout                         */
+/* ------------------------------------------------------------------ */
 
 static void
 vcodex_window_init (AetherIdeWindow *self)
 {
-    // Apply transparent theme
     apply_transparent_theme (GTK_WIDGET (self));
-
-    // Configure window
     gtk_window_set_default_size (GTK_WINDOW (self), 1000, 700);
     gtk_window_set_title (GTK_WINDOW (self), "AetherIDE");
 
-    // Header bar
+    /* ---- Header bar ---- */
     GtkWidget *header_bar = gtk_header_bar_new ();
     gtk_header_bar_set_show_close_button (GTK_HEADER_BAR (header_bar), TRUE);
     gtk_header_bar_set_title (GTK_HEADER_BAR (header_bar), "AetherIDE");
-    
-    GtkWidget *open_btn = gtk_button_new_with_label ("Open");
+
+    GtkWidget *open_btn        = gtk_button_new_with_label ("Open");
     GtkWidget *open_folder_btn = gtk_button_new_with_label ("Open Folder");
-    GtkWidget *save_btn = gtk_button_new_with_label ("Save");
-    GtkWidget *cmd_btn = gtk_button_new_with_label ("Command Palette");
-    
+    GtkWidget *save_btn        = gtk_button_new_with_label ("Save");
+    GtkWidget *cmd_btn         = gtk_button_new_with_label ("Command Palette");
+
     gtk_header_bar_pack_start (GTK_HEADER_BAR (header_bar), open_btn);
     gtk_header_bar_pack_start (GTK_HEADER_BAR (header_bar), open_folder_btn);
     gtk_header_bar_pack_start (GTK_HEADER_BAR (header_bar), save_btn);
-    gtk_header_bar_pack_end (GTK_HEADER_BAR (header_bar), cmd_btn);
-    
-    g_signal_connect (open_btn, "clicked", G_CALLBACK (on_open_clicked), self);
+    gtk_header_bar_pack_end   (GTK_HEADER_BAR (header_bar), cmd_btn);
+
+    g_signal_connect (open_btn,        "clicked", G_CALLBACK (on_open_clicked),        self);
     g_signal_connect (open_folder_btn, "clicked", G_CALLBACK (on_open_folder_clicked), self);
-    g_signal_connect (save_btn, "clicked", G_CALLBACK (on_save_clicked), self);
-    
-    // Command Palette Setup
+    g_signal_connect (save_btn,        "clicked", G_CALLBACK (on_save_clicked),        self);
+
+    /* Command palette popover */
     self->command_popover = gtk_popover_new (cmd_btn);
     GtkWidget *popover_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 5);
     gtk_container_set_border_width (GTK_CONTAINER (popover_box), 10);
-    
+
     self->command_entry = gtk_search_entry_new ();
     gtk_widget_set_size_request (self->command_entry, 300, -1);
     gtk_box_pack_start (GTK_BOX (popover_box), self->command_entry, FALSE, FALSE, 0);
-    
-    GtkWidget *cmd_list = gtk_list_box_new ();
+
+    GtkWidget *cmd_list   = gtk_list_box_new ();
     GtkWidget *dummy_item = gtk_label_new ("> Run Build Task");
     gtk_list_box_insert (GTK_LIST_BOX (cmd_list), dummy_item, -1);
     gtk_box_pack_start (GTK_BOX (popover_box), cmd_list, TRUE, TRUE, 0);
-    
+
     gtk_container_add (GTK_CONTAINER (self->command_popover), popover_box);
     gtk_widget_show_all (popover_box);
-    
-    g_signal_connect_swapped (cmd_btn, "clicked", G_CALLBACK (gtk_widget_show), self->command_popover);
-    
+    g_signal_connect_swapped (cmd_btn, "clicked",
+                              G_CALLBACK (gtk_widget_show), self->command_popover);
+
     gtk_window_set_titlebar (GTK_WINDOW (self), header_bar);
 
-    // Main layout
+    /* ---- Main horizontal pane ---- */
     self->main_paned = gtk_paned_new (GTK_ORIENTATION_HORIZONTAL);
     gtk_container_add (GTK_CONTAINER (self), self->main_paned);
 
-    // Sidebar Wrapper (Activity Bar + Stack)
+    /* ---- Sidebar: activity bar + stack ---- */
     self->sidebar_wrapper = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_set_size_request (self->sidebar_wrapper, 250, -1);
     gtk_paned_pack1 (GTK_PANED (self->main_paned), self->sidebar_wrapper, FALSE, FALSE);
 
-    // Activity Bar
     self->activity_bar = gtk_box_new (GTK_ORIENTATION_VERTICAL, 15);
-    gtk_widget_set_margin_top (self->activity_bar, 10); // Add some margin at the top as well
-    GtkStyleContext *act_ctx = gtk_widget_get_style_context (self->activity_bar);
-    gtk_style_context_add_class (act_ctx, "activitybar");
+    gtk_widget_set_margin_top (self->activity_bar, 10);
+    gtk_style_context_add_class (gtk_widget_get_style_context (self->activity_bar), "activitybar");
     gtk_box_pack_start (GTK_BOX (self->sidebar_wrapper), self->activity_bar, FALSE, FALSE, 0);
 
-    // Sidebar Stack
     self->sidebar_stack = gtk_stack_new ();
-    gtk_stack_set_transition_type (GTK_STACK (self->sidebar_stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+    gtk_stack_set_transition_type (GTK_STACK (self->sidebar_stack),
+                                   GTK_STACK_TRANSITION_TYPE_CROSSFADE);
     gtk_box_pack_start (GTK_BOX (self->sidebar_wrapper), self->sidebar_stack, TRUE, TRUE, 0);
 
-    // Explorer Page
+    /* Explorer page */
     self->explorer_page = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
     GtkWidget *explorer_label = gtk_label_new ("Explorer");
-    gtk_widget_set_margin_top (explorer_label, 10);
+    gtk_widget_set_margin_top    (explorer_label, 10);
     gtk_widget_set_margin_bottom (explorer_label, 10);
     gtk_box_pack_start (GTK_BOX (self->explorer_page), explorer_label, FALSE, FALSE, 0);
-    
-    // Search Page
+
+    /* Search page */
     self->search_page = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
     GtkWidget *search_label = gtk_label_new ("Search");
-    gtk_widget_set_margin_top (search_label, 10);
+    gtk_widget_set_margin_top    (search_label, 10);
     gtk_widget_set_margin_bottom (search_label, 10);
     gtk_box_pack_start (GTK_BOX (self->search_page), search_label, FALSE, FALSE, 0);
-    
+
     self->sidebar_search_entry = gtk_search_entry_new ();
-    gtk_widget_set_margin_start (self->sidebar_search_entry, 5);
-    gtk_widget_set_margin_end (self->sidebar_search_entry, 5);
+    gtk_widget_set_margin_start  (self->sidebar_search_entry, 5);
+    gtk_widget_set_margin_end    (self->sidebar_search_entry, 5);
     gtk_widget_set_margin_bottom (self->sidebar_search_entry, 10);
-    gtk_box_pack_start (GTK_BOX (self->search_page), self->sidebar_search_entry, FALSE, FALSE, 0);
-    
-    // Activity Bar Buttons
+    gtk_box_pack_start (GTK_BOX (self->search_page),
+                        self->sidebar_search_entry, FALSE, FALSE, 0);
+
+    /* Activity bar buttons */
     GtkWidget *explorer_btn = gtk_radio_button_new (NULL);
-    gtk_button_set_image (GTK_BUTTON(explorer_btn), gtk_image_new_from_icon_name("folder-symbolic", GTK_ICON_SIZE_LARGE_TOOLBAR));
-    gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON(explorer_btn), FALSE);
-    gtk_style_context_add_class (gtk_widget_get_style_context(explorer_btn), "flat");
-    
-    GtkWidget *search_btn = gtk_radio_button_new_from_widget (GTK_RADIO_BUTTON(explorer_btn));
-    gtk_button_set_image (GTK_BUTTON(search_btn), gtk_image_new_from_icon_name("system-search-symbolic", GTK_ICON_SIZE_LARGE_TOOLBAR));
-    gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON(search_btn), FALSE);
-    gtk_style_context_add_class (gtk_widget_get_style_context(search_btn), "flat");
+    gtk_button_set_image (GTK_BUTTON (explorer_btn),
+        gtk_image_new_from_icon_name ("folder-symbolic", GTK_ICON_SIZE_LARGE_TOOLBAR));
+    gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (explorer_btn), FALSE);
+    gtk_style_context_add_class (gtk_widget_get_style_context (explorer_btn), "flat");
+
+    GtkWidget *search_btn = gtk_radio_button_new_from_widget (GTK_RADIO_BUTTON (explorer_btn));
+    gtk_button_set_image (GTK_BUTTON (search_btn),
+        gtk_image_new_from_icon_name ("system-search-symbolic", GTK_ICON_SIZE_LARGE_TOOLBAR));
+    gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (search_btn), FALSE);
+    gtk_style_context_add_class (gtk_widget_get_style_context (search_btn), "flat");
 
     gtk_box_pack_start (GTK_BOX (self->activity_bar), explorer_btn, FALSE, FALSE, 0);
-    gtk_box_pack_start (GTK_BOX (self->activity_bar), search_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (self->activity_bar), search_btn,   FALSE, FALSE, 0);
 
     g_signal_connect (explorer_btn, "toggled", G_CALLBACK (on_activity_btn_toggled), self->explorer_page);
-    g_signal_connect (search_btn, "toggled", G_CALLBACK (on_activity_btn_toggled), self->search_page);
-    
+    g_signal_connect (search_btn,   "toggled", G_CALLBACK (on_activity_btn_toggled), self->search_page);
+
     gtk_stack_add_named (GTK_STACK (self->sidebar_stack), self->explorer_page, "explorer");
-    gtk_stack_add_named (GTK_STACK (self->sidebar_stack), self->search_page, "search");
-    
-    self->tree_store = gtk_tree_store_new (NUM_COLUMNS, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
-    gtk_tree_sortable_set_sort_func (GTK_TREE_SORTABLE (self->tree_store), COLUMN_NAME, sort_tree_func, NULL, NULL);
-    gtk_tree_sortable_set_sort_column_id (GTK_TREE_SORTABLE (self->tree_store), COLUMN_NAME, GTK_SORT_ASCENDING);
-    
-    self->search_store = gtk_tree_store_new (NUM_SEARCH_COLUMNS, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT);
-    
-    g_signal_connect (self->sidebar_search_entry, "search-changed", G_CALLBACK (on_sidebar_search_changed), self);
-    
+    gtk_stack_add_named (GTK_STACK (self->sidebar_stack), self->search_page,   "search");
+
+    /* File-explorer tree */
+    self->tree_store = gtk_tree_store_new (NUM_COLUMNS,
+                                           G_TYPE_ICON, G_TYPE_STRING,
+                                           G_TYPE_STRING, G_TYPE_BOOLEAN);
+    gtk_tree_sortable_set_sort_func (GTK_TREE_SORTABLE (self->tree_store),
+                                     COLUMN_NAME, sort_tree_func, NULL, NULL);
+    gtk_tree_sortable_set_sort_column_id (GTK_TREE_SORTABLE (self->tree_store),
+                                          COLUMN_NAME, GTK_SORT_ASCENDING);
+
     self->tree_view = gtk_tree_view_new_with_model (GTK_TREE_MODEL (self->tree_store));
     g_object_unref (self->tree_store);
-    
     gtk_tree_view_set_activate_on_single_click (GTK_TREE_VIEW (self->tree_view), TRUE);
-    
-    GtkTreeViewColumn *column = gtk_tree_view_column_new ();
-    GtkCellRenderer *icon_renderer = gtk_cell_renderer_pixbuf_new ();
-    g_object_set (icon_renderer, "stock-size", GTK_ICON_SIZE_MENU, NULL);
-    gtk_tree_view_column_pack_start (column, icon_renderer, FALSE);
-    gtk_tree_view_column_add_attribute (column, icon_renderer, "gicon", COLUMN_ICON);
-    GtkCellRenderer *text_renderer = gtk_cell_renderer_text_new ();
-    gtk_tree_view_column_pack_start (column, text_renderer, TRUE);
-    gtk_tree_view_column_add_attribute (column, text_renderer, "text", COLUMN_NAME);
-    gtk_tree_view_append_column (GTK_TREE_VIEW (self->tree_view), column);
     gtk_tree_view_set_headers_visible (GTK_TREE_VIEW (self->tree_view), FALSE);
-    
-    g_signal_connect (self->tree_view, "row-activated", G_CALLBACK (on_tree_row_activated), self);
-    
+
+    GtkTreeViewColumn *col       = gtk_tree_view_column_new ();
+    GtkCellRenderer   *icon_rend = gtk_cell_renderer_pixbuf_new ();
+    GtkCellRenderer   *text_rend = gtk_cell_renderer_text_new ();
+    g_object_set (icon_rend, "stock-size", GTK_ICON_SIZE_MENU, NULL);
+    gtk_tree_view_column_pack_start (col, icon_rend, FALSE);
+    gtk_tree_view_column_add_attribute (col, icon_rend, "gicon", COLUMN_ICON);
+    gtk_tree_view_column_pack_start (col, text_rend, TRUE);
+    gtk_tree_view_column_add_attribute (col, text_rend, "text", COLUMN_NAME);
+    gtk_tree_view_append_column (GTK_TREE_VIEW (self->tree_view), col);
+
+    g_signal_connect (self->tree_view, "row-activated",
+                      G_CALLBACK (on_tree_row_activated), self);
+
     GtkWidget *tree_scroll = gtk_scrolled_window_new (NULL, NULL);
     gtk_container_add (GTK_CONTAINER (tree_scroll), self->tree_view);
     gtk_box_pack_start (GTK_BOX (self->explorer_page), tree_scroll, TRUE, TRUE, 0);
-    
-    // Search Results View
-    self->search_results_view = gtk_tree_view_new_with_model (GTK_TREE_MODEL (self->search_store));
+
+    /* Search results tree */
+    self->search_store = gtk_tree_store_new (NUM_SEARCH_COLUMNS,
+                                             G_TYPE_ICON, G_TYPE_STRING,
+                                             G_TYPE_STRING, G_TYPE_INT);
+    self->search_results_view =
+        gtk_tree_view_new_with_model (GTK_TREE_MODEL (self->search_store));
     g_object_unref (self->search_store);
-    gtk_tree_view_set_activate_on_single_click (GTK_TREE_VIEW (self->search_results_view), TRUE);
-    
-    GtkTreeViewColumn *search_col = gtk_tree_view_column_new ();
-    GtkCellRenderer *search_icon_renderer = gtk_cell_renderer_pixbuf_new ();
-    g_object_set (search_icon_renderer, "stock-size", GTK_ICON_SIZE_MENU, NULL);
-    gtk_tree_view_column_pack_start (search_col, search_icon_renderer, FALSE);
-    gtk_tree_view_column_add_attribute (search_col, search_icon_renderer, "gicon", SEARCH_COL_ICON);
-    GtkCellRenderer *search_text_renderer = gtk_cell_renderer_text_new ();
-    gtk_tree_view_column_pack_start (search_col, search_text_renderer, TRUE);
-    gtk_tree_view_column_add_attribute (search_col, search_text_renderer, "text", SEARCH_COL_TEXT);
-    gtk_tree_view_append_column (GTK_TREE_VIEW (self->search_results_view), search_col);
+    gtk_tree_view_set_activate_on_single_click (
+        GTK_TREE_VIEW (self->search_results_view), TRUE);
     gtk_tree_view_set_headers_visible (GTK_TREE_VIEW (self->search_results_view), FALSE);
-    
-    g_signal_connect (self->search_results_view, "row-activated", G_CALLBACK (on_search_row_activated), self);
-    
+
+    GtkTreeViewColumn *scol       = gtk_tree_view_column_new ();
+    GtkCellRenderer   *sicon_rend = gtk_cell_renderer_pixbuf_new ();
+    GtkCellRenderer   *stext_rend = gtk_cell_renderer_text_new ();
+    g_object_set (sicon_rend, "stock-size", GTK_ICON_SIZE_MENU, NULL);
+    gtk_tree_view_column_pack_start (scol, sicon_rend, FALSE);
+    gtk_tree_view_column_add_attribute (scol, sicon_rend, "gicon", SEARCH_COL_ICON);
+    gtk_tree_view_column_pack_start (scol, stext_rend, TRUE);
+    gtk_tree_view_column_add_attribute (scol, stext_rend, "text", SEARCH_COL_TEXT);
+    gtk_tree_view_append_column (GTK_TREE_VIEW (self->search_results_view), scol);
+
+    g_signal_connect (self->search_results_view, "row-activated",
+                      G_CALLBACK (on_search_row_activated), self);
+    g_signal_connect (self->sidebar_search_entry, "search-changed",
+                      G_CALLBACK (on_sidebar_search_changed), self);
+
     GtkWidget *search_scroll = gtk_scrolled_window_new (NULL, NULL);
     gtk_container_add (GTK_CONTAINER (search_scroll), self->search_results_view);
     gtk_box_pack_start (GTK_BOX (self->search_page), search_scroll, TRUE, TRUE, 0);
 
-    // Editor Paned
+    /* ---- Editor pane (right side) ---- */
     self->editor_paned = gtk_paned_new (GTK_ORIENTATION_VERTICAL);
     gtk_paned_pack2 (GTK_PANED (self->main_paned), self->editor_paned, TRUE, FALSE);
 
-    // Notebook (Tabs)
     self->notebook = gtk_notebook_new ();
     gtk_notebook_set_scrollable (GTK_NOTEBOOK (self->notebook), TRUE);
     gtk_paned_pack1 (GTK_PANED (self->editor_paned), self->notebook, TRUE, FALSE);
-    
-    g_signal_connect (self->notebook, "switch-page", G_CALLBACK (on_notebook_switch_page), self);
 
-    // Default empty view for testing
+    g_signal_connect (self->notebook, "switch-page",
+                      G_CALLBACK (on_notebook_switch_page), self);
+
     create_editor_tab (self, "Untitled-1", NULL, NULL);
 
-    // Bottom Panel
+    /* ---- Bottom panel (terminal) ---- */
     self->bottom_panel = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_size_request (self->bottom_panel, -1, 150);
-    
-    self->terminal = vte_terminal_new ();
-    GdkRGBA bg_color = {0.0, 0.0, 0.0, 0.0};
-    vte_terminal_set_color_background (VTE_TERMINAL (self->terminal), &bg_color);
-    
-    g_signal_connect (self->terminal, "key-press-event", G_CALLBACK (on_terminal_key_press), self);
-    g_signal_connect (self->terminal, "button-press-event", G_CALLBACK (on_terminal_button_press), self);
-    
-    gchar **envp = g_get_environ ();
-    gchar **command = g_new0 (gchar *, 2);
-    command[0] = g_strdup (g_environ_getenv (envp, "SHELL"));
-    if (!command[0]) command[0] = g_strdup ("/bin/bash");
-    
-    vte_terminal_spawn_async (VTE_TERMINAL (self->terminal),
-                              VTE_PTY_DEFAULT,
-                              NULL, // working directory
-                              command,
-                              NULL, // environment
-                              G_SPAWN_DEFAULT,
-                              NULL, NULL,
-                              NULL,
-                              -1, // timeout
-                              NULL, NULL, NULL);
-    g_strfreev (command);
-    g_strfreev (envp);
 
-    GtkWidget *term_scroll = gtk_scrolled_window_new (NULL, NULL);
-    gtk_container_add (GTK_CONTAINER (term_scroll), self->terminal);
+    GtkWidget *term_scroll = terminal_panel_new ();
     gtk_box_pack_start (GTK_BOX (self->bottom_panel), term_scroll, TRUE, TRUE, 0);
 
     gtk_paned_pack2 (GTK_PANED (self->editor_paned), self->bottom_panel, FALSE, FALSE);
 
     gtk_widget_show_all (GTK_WIDGET (self));
 }
+
+/* ------------------------------------------------------------------ */
+/* Public constructor                                                   */
+/* ------------------------------------------------------------------ */
 
 AetherIdeWindow *
 vcodex_window_new (GtkApplication *app)

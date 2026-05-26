@@ -1,6 +1,10 @@
 vcodex_sources = [
   'main.c',
   'vcodex_window.c',
+  'editor_tab.c',
+  'file_explorer.c',
+  'search_panel.c',
+  'terminal_panel.c',
   'lsp_client.c'
 ]
 
