@@ -8,6 +8,7 @@ vcodex_sources = [
   'search_panel.c',
   'terminal_panel.c',
   'bottom_panel.c',
+  'layout_controls.c',
   'lsp_client.c'
 ]
 

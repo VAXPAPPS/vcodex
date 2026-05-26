@@ -20,6 +20,7 @@
 #include "explorer_context_menu.h"
 #include "explorer_dnd.h"
 #include "bottom_panel.h"
+#include "layout_controls.h"
 
 /* ------------------------------------------------------------------ */
 /* Struct definition                                                    */
@@ -29,9 +30,11 @@ struct _AetherIdeWindow {
     GtkApplicationWindow parent_instance;
 
     GtkWidget *main_paned;
+    GtkWidget *main_paned2;
     GtkWidget *editor_paned;
     GtkWidget *notebook;
     GtkWidget *bottom_panel;
+    GtkWidget *ai_panel;
 
     GtkWidget *sidebar_wrapper;
     GtkWidget *activity_bar;
@@ -365,9 +368,13 @@ vcodex_window_init (AetherIdeWindow *self)
     gtk_container_add (GTK_CONTAINER (search_scroll), self->search_results_view);
     gtk_box_pack_start (GTK_BOX (self->search_page), search_scroll, TRUE, TRUE, 0);
 
-    /* ---- Editor pane (right side) ---- */
+    /* ---- Editor pane wrapper (center & right) ---- */
+    self->main_paned2 = gtk_paned_new (GTK_ORIENTATION_HORIZONTAL);
+    gtk_paned_pack2 (GTK_PANED (self->main_paned), self->main_paned2, TRUE, FALSE);
+
+    /* ---- Editor pane (center) ---- */
     self->editor_paned = gtk_paned_new (GTK_ORIENTATION_VERTICAL);
-    gtk_paned_pack2 (GTK_PANED (self->main_paned), self->editor_paned, TRUE, FALSE);
+    gtk_paned_pack1 (GTK_PANED (self->main_paned2), self->editor_paned, TRUE, FALSE);
 
     self->notebook = gtk_notebook_new ();
     gtk_notebook_set_scrollable (GTK_NOTEBOOK (self->notebook), TRUE);
@@ -387,7 +394,26 @@ vcodex_window_init (AetherIdeWindow *self)
 
     gtk_paned_pack2 (GTK_PANED (self->editor_paned), self->bottom_panel, FALSE, FALSE);
 
+    /* ---- AI Panel (right side) ---- */
+    self->ai_panel = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_size_request (self->ai_panel, 250, -1);
+    GtkWidget *ai_label = gtk_label_new ("AI Agent Placeholder");
+    gtk_widget_set_valign (ai_label, GTK_ALIGN_CENTER);
+    gtk_widget_set_halign (ai_label, GTK_ALIGN_CENTER);
+    gtk_box_pack_start (GTK_BOX (self->ai_panel), ai_label, TRUE, TRUE, 0);
+    gtk_paned_pack2 (GTK_PANED (self->main_paned2), self->ai_panel, FALSE, FALSE);
+
+    /* Initially hide AI panel */
+    gtk_widget_set_visible (self->ai_panel, FALSE);
+
+    /* Now that all panels are created, add Layout Controls to the header bar */
+    GtkWidget *layout_box = layout_controls_new (self->sidebar_wrapper, self->sidebar_stack, self->bottom_panel, self->ai_panel);
+    gtk_header_bar_pack_end (GTK_HEADER_BAR (header_bar), layout_box);
+
     gtk_widget_show_all (GTK_WIDGET (self));
+    
+    // Ensure AI Panel stays hidden after show_all
+    gtk_widget_set_visible (self->ai_panel, FALSE);
 }
 
 /* ------------------------------------------------------------------ */
