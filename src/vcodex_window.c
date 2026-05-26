@@ -23,6 +23,7 @@
 #include "layout_controls.h"
 #include "ai_panel.h"
 #include "ai_settings.h"
+#include "theme_manager.h"
 
 /* ------------------------------------------------------------------ */
 /* Struct definition                                                    */
@@ -112,7 +113,7 @@ aether_ide_window_set_workspace_dir (AetherIdeWindow *self, const gchar *dir)
 static void
 apply_transparent_theme (GtkWidget *widget)
 {
-    gtk_widget_set_app_paintable (widget, TRUE);
+    gtk_widget_set_app_paintable (widget, FALSE);
 
     GdkScreen *screen = gtk_widget_get_screen (widget);
     GdkVisual *visual = gdk_screen_get_rgba_visual (screen);
@@ -198,6 +199,7 @@ vcodex_window_init (AetherIdeWindow *self)
     gtk_window_set_default_size (GTK_WINDOW (self), 1000, 700);
     gtk_window_set_title (GTK_WINDOW (self), "AetherIDE");
 
+    theme_manager_init ();
     ai_settings_init ();
 
     /* ---- Header bar ---- */

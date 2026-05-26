@@ -13,6 +13,7 @@ vcodex_sources = [
   'ai_panel.c',
   'ai_agent.c',
   'ai_tools.c',
+  'theme_manager.c',
   'lsp_client.c'
 ]
 
