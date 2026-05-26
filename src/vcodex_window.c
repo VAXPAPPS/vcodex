@@ -151,8 +151,24 @@ on_activity_btn_toggled (GtkToggleButton *button, GtkWidget *page)
 {
     if (!gtk_toggle_button_get_active (button)) return;
     GtkWidget *stack = gtk_widget_get_parent (page);
-    if (GTK_IS_STACK (stack))
+    if (GTK_IS_STACK (stack)) {
         gtk_stack_set_visible_child (GTK_STACK (stack), page);
+        // Ensure sidebar is visible if it was hidden
+        if (!gtk_widget_get_visible (stack)) {
+            gtk_widget_set_visible (stack, TRUE);
+        }
+    }
+}
+
+static gboolean
+on_activity_btn_button_press (GtkWidget *button, GdkEventButton *event, AetherIdeWindow *self)
+{
+    if (event->type == GDK_2BUTTON_PRESS && event->button == 1) {
+        gboolean is_visible = gtk_widget_get_visible (self->sidebar_stack);
+        gtk_widget_set_visible (self->sidebar_stack, !is_visible);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 /* ------------------------------------------------------------------ */
@@ -222,7 +238,6 @@ vcodex_window_init (AetherIdeWindow *self)
 
     /* ---- Sidebar: activity bar + stack ---- */
     self->sidebar_wrapper = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_size_request (self->sidebar_wrapper, 250, -1);
     gtk_paned_pack1 (GTK_PANED (self->main_paned), self->sidebar_wrapper, FALSE, FALSE);
 
     self->activity_bar = gtk_box_new (GTK_ORIENTATION_VERTICAL, 15);
@@ -231,6 +246,7 @@ vcodex_window_init (AetherIdeWindow *self)
     gtk_box_pack_start (GTK_BOX (self->sidebar_wrapper), self->activity_bar, FALSE, FALSE, 0);
 
     self->sidebar_stack = gtk_stack_new ();
+    gtk_widget_set_size_request (self->sidebar_stack, 200, -1);
     gtk_stack_set_transition_type (GTK_STACK (self->sidebar_stack),
                                    GTK_STACK_TRANSITION_TYPE_CROSSFADE);
     gtk_box_pack_start (GTK_BOX (self->sidebar_wrapper), self->sidebar_stack, TRUE, TRUE, 0);
@@ -274,6 +290,9 @@ vcodex_window_init (AetherIdeWindow *self)
 
     g_signal_connect (explorer_btn, "toggled", G_CALLBACK (on_activity_btn_toggled), self->explorer_page);
     g_signal_connect (search_btn,   "toggled", G_CALLBACK (on_activity_btn_toggled), self->search_page);
+    
+    g_signal_connect (explorer_btn, "button-press-event", G_CALLBACK (on_activity_btn_button_press), self);
+    g_signal_connect (search_btn,   "button-press-event", G_CALLBACK (on_activity_btn_button_press), self);
 
     gtk_stack_add_named (GTK_STACK (self->sidebar_stack), self->explorer_page, "explorer");
     gtk_stack_add_named (GTK_STACK (self->sidebar_stack), self->search_page,   "search");
