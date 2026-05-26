@@ -21,6 +21,8 @@
 #include "explorer_dnd.h"
 #include "bottom_panel.h"
 #include "layout_controls.h"
+#include "ai_panel.h"
+#include "ai_settings.h"
 
 /* ------------------------------------------------------------------ */
 /* Struct definition                                                    */
@@ -195,6 +197,8 @@ vcodex_window_init (AetherIdeWindow *self)
     apply_transparent_theme (GTK_WIDGET (self));
     gtk_window_set_default_size (GTK_WINDOW (self), 1000, 700);
     gtk_window_set_title (GTK_WINDOW (self), "AetherIDE");
+
+    ai_settings_init ();
 
     /* ---- Header bar ---- */
     GtkWidget *header_bar = gtk_header_bar_new ();
@@ -395,12 +399,8 @@ vcodex_window_init (AetherIdeWindow *self)
     gtk_paned_pack2 (GTK_PANED (self->editor_paned), self->bottom_panel, FALSE, FALSE);
 
     /* ---- AI Panel (right side) ---- */
-    self->ai_panel = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_set_size_request (self->ai_panel, 250, -1);
-    GtkWidget *ai_label = gtk_label_new ("AI Agent Placeholder");
-    gtk_widget_set_valign (ai_label, GTK_ALIGN_CENTER);
-    gtk_widget_set_halign (ai_label, GTK_ALIGN_CENTER);
-    gtk_box_pack_start (GTK_BOX (self->ai_panel), ai_label, TRUE, TRUE, 0);
+    self->ai_panel = ai_panel_new (self);
+    gtk_widget_set_size_request (self->ai_panel, 300, -1); // Slightly wider for chat
     gtk_paned_pack2 (GTK_PANED (self->main_paned2), self->ai_panel, FALSE, FALSE);
 
     /* Initially hide AI panel */

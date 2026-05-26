@@ -9,6 +9,10 @@ vcodex_sources = [
   'terminal_panel.c',
   'bottom_panel.c',
   'layout_controls.c',
+  'ai_settings.c',
+  'ai_panel.c',
+  'ai_agent.c',
+  'ai_tools.c',
   'lsp_client.c'
 ]
 
@@ -16,7 +20,9 @@ vcodex_deps = [
   gtk_dep,
   gtksourceview_dep,
   gio_dep,
-  vte_dep
+  vte_dep,
+  soup_dep,
+  json_dep
 ]
 
 inc = include_directories('../include', '.')
