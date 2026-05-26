@@ -130,7 +130,8 @@ apply_transparent_theme (GtkWidget *widget)
         "                    background-color: rgba(0,0,0,0); }"
         "activitybar radio:checked { border-left: 2px solid cyan; }"
         "headerbar         { background-color: rgba(0,0,0,0); border: none; }"
-        "menu, popover, popover > contents { background-color: rgba(0, 0, 0, 0.71); }";
+        "menu, popover, popover > contents { background-color: rgba(0, 0, 0, 0.71); }"
+        "window.dialog, dialog { background-color: rgba(0, 0, 0, 0.3); }";
 
     GtkCssProvider *provider = gtk_css_provider_new ();
     gtk_css_provider_load_from_data (provider, css, -1, NULL);

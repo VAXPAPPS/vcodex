@@ -62,6 +62,16 @@ refresh_tree (AetherIdeWindow *window)
     populate_tree_model (store, NULL, workspace);
 }
 
+static void
+make_dialog_transparent (GtkWidget *dialog)
+{
+    gtk_widget_set_app_paintable (dialog, TRUE);
+    GdkScreen *screen = gtk_widget_get_screen (dialog);
+    GdkVisual *visual = gdk_screen_get_rgba_visual (screen);
+    if (visual && gdk_screen_is_composited (screen))
+        gtk_widget_set_visual (dialog, visual);
+}
+
 /* Prompts user with a simple dialog containing an entry */
 static gchar *
 prompt_user_input (AetherIdeWindow *window, const gchar *title, const gchar *initial_text)
@@ -72,6 +82,7 @@ prompt_user_input (AetherIdeWindow *window, const gchar *title, const gchar *ini
                                                      "_Cancel", GTK_RESPONSE_CANCEL,
                                                      "_OK", GTK_RESPONSE_ACCEPT,
                                                      NULL);
+    make_dialog_transparent (dialog);
     
     GtkWidget *content_area = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
     GtkWidget *entry = gtk_entry_new ();
@@ -196,6 +207,7 @@ on_delete (GtkMenuItem *item, ContextActionData *data)
                                                 GTK_BUTTONS_YES_NO,
                                                 "Are you sure you want to delete '%s'?",
                                                 g_path_get_basename (data->target_path));
+    make_dialog_transparent (dialog);
     
     if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_YES) {
         GFile *file = g_file_new_for_path (data->target_path);
