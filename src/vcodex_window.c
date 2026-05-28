@@ -22,6 +22,7 @@
 #include "bottom_panel.h"
 #include "layout_controls.h"
 #include "ai_panel.h"
+#include "ai_agent.h"
 #include "ai_settings.h"
 #include "theme_manager.h"
 
@@ -201,6 +202,7 @@ vcodex_window_init (AetherIdeWindow *self)
 
     theme_manager_init ();
     ai_settings_init ();
+    ai_agent_init (self); /* initializes tools + agent session */
 
     /* ---- Header bar ---- */
     GtkWidget *header_bar = gtk_header_bar_new ();
