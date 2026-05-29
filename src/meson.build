@@ -14,6 +14,7 @@ vcodex_sources = [
   'ai_provider.c',     # Layer 2: Provider adapters
   'ai_settings.c',     # Layer 3: Settings (depends on provider)
   'ai_context.c',      # Layer 3: IDE context capture
+  'ai_conversation.c', # Layer 3: Conversation persistence
   'ai_tools.c',        # Layer 4: Native tools
   'ai_agent.c',        # Layer 5: Orchestrator
   'ai_panel.c',        # Layer 6: UI

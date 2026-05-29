@@ -456,3 +456,37 @@ ai_agent_send_prompt (const gchar          *prompt,
 
     ai_agent_session_send (g_default_session, prompt, on_token, on_done, user_data);
 }
+
+/* ------------------------------------------------------------------ */
+/* History access — for conversation persistence                        */
+/* ------------------------------------------------------------------ */
+
+gint
+ai_agent_session_get_message_count (AiAgentSession *session)
+{
+    g_return_val_if_fail (session != NULL, 0);
+    return (gint) session->history->len;
+}
+
+const AiMessage *
+ai_agent_session_get_message_at (AiAgentSession *session, gint index)
+{
+    g_return_val_if_fail (session != NULL, NULL);
+    if (index < 0 || index >= (gint) session->history->len) return NULL;
+    return (const AiMessage *) g_ptr_array_index (session->history, (guint) index);
+}
+
+void
+ai_agent_session_load_history (AiAgentSession *session, GPtrArray *messages)
+{
+    g_return_if_fail (session != NULL);
+    g_return_if_fail (messages != NULL);
+
+    for (guint i = 0; i < messages->len; i++) {
+        const AiMessage *src = (const AiMessage *) g_ptr_array_index (messages, i);
+        /* Deep-copy each message */
+        g_ptr_array_add (session->history,
+            ai_message_new (src->role, src->content, src->tool_calls,
+                            src->tool_call_id, src->tool_name));
+    }
+}

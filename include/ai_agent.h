@@ -16,6 +16,7 @@
 #include <glib.h>
 #include <gio/gio.h>
 #include "vcodex_window.h"
+#include "ai_provider.h"   /* For AiMessage */
 
 G_BEGIN_DECLS
 
@@ -124,6 +125,33 @@ void ai_agent_send_prompt (const gchar *prompt,
                            AiAgentTokenCallback on_token,
                            AiAgentDoneCallback  on_done,
                            gpointer user_data);
+
+/* ------------------------------------------------------------------ */
+/* Session history access (for persistence)                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * ai_agent_session_get_message_count:
+ * Returns total number of messages in the session history (incl. system).
+ */
+gint ai_agent_session_get_message_count (AiAgentSession *session);
+
+/**
+ * ai_agent_session_get_message_at:
+ * Returns the message at @index in history. Pointer is valid until the
+ * session is modified. Do NOT free the returned pointer.
+ * Returns NULL if index is out of range.
+ */
+const AiMessage *ai_agent_session_get_message_at (AiAgentSession *session, gint index);
+
+/**
+ * ai_agent_session_load_history:
+ * Append an array of AiMessage* into the session history.
+ * Messages are deep-copied. Use when restoring a saved conversation.
+ * @messages: GPtrArray<AiMessage*>
+ */
+void ai_agent_session_load_history (AiAgentSession *session,
+                                     GPtrArray      *messages);
 
 G_END_DECLS
 

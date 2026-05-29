@@ -12,6 +12,8 @@
  *   • Code block action buttons: Copy | Insert at Cursor
  *   • Keyboard shortcut: Ctrl+Enter to send
  *   • Model/provider badge in the header
+ *   • Conversation persistence: auto-save to ~/.local/share/vcodex/conversations/
+ *   • Multi-conversation switcher with history popover
  */
 
 #include "ai_panel.h"
@@ -20,6 +22,7 @@
 #include "ai_provider.h"
 #include "ai_context.h"
 #include "ai_tools.h"
+#include "ai_conversation.h"
 #include "vcodex_window_private.h"
 #include <gtksourceview/gtksource.h>
 #include <string.h>
@@ -46,12 +49,24 @@ typedef struct {
     GtkWidget *status_bar;      /* row with spinner + thinking_label */
 
     /* Current streaming row */
-    GtkWidget  *streaming_row;      /* GtkListBoxRow being built */
+    GtkWidget     *streaming_row;   /* GtkListBoxRow being built */
     GtkTextBuffer *streaming_buf;   /* Buffer in the streaming row */
-    GtkTextTag    *streaming_tag;   /* Bold tag for highlighting */
+    GtkTextTag    *streaming_tag;   /* Cursor highlight tag */
 
     gboolean    is_streaming;
     gboolean    attach_context;     /* If TRUE, next send includes file context */
+
+    /* ---- Conversation persistence ---- */
+    gchar      *conv_id;            /* Active conversation UUID */
+    gint        presend_history_len;/* History length recorded before last send */
+    gboolean    conv_titled;        /* TRUE once auto-title has been set */
+    gchar      *pending_user_text;  /* First user message (for auto-titling) */
+
+    /* ---- Conversation switcher UI ---- */
+    GtkWidget  *conv_btn;           /* History icon button in header */
+    GtkWidget  *conv_popover;       /* GtkPopover containing conv list */
+    GtkWidget  *conv_list_box;      /* GtkListBox inside the popover */
+    GtkWidget  *conv_title_label;   /* Label showing current conv title */
 } AiPanelData;
 
 /* ================================================================== */
@@ -73,6 +88,60 @@ static const gchar *PANEL_CSS =
     "  padding: 2px 8px;"
     "  font-size: 11px;"
     "}"
+    ".conv-title-label {"
+    "  font-size: 11px;"
+    "  color: rgba(255,255,255,0.55);"
+    "  font-style: italic;"
+    "  max-width: 120px;"
+    "}"
+    /* Conversation popover */
+    ".conv-popover {"
+    "  padding: 0;"
+    "}"
+    ".conv-popover-header {"
+    "  padding: 8px 12px;"
+    "  border-bottom: 1px solid rgba(255,255,255,0.08);"
+    "  font-weight: bold;"
+    "  font-size: 12px;"
+    "}"
+    ".conv-row {"
+    "  padding: 8px 12px;"
+    "  border-bottom: 1px solid rgba(255,255,255,0.04);"
+    "  transition: background 120ms ease;"
+    "}"
+    ".conv-row:hover {"
+    "  background: rgba(255,255,255,0.07);"
+    "}"
+    ".conv-row-active {"
+    "  background: rgba(99,179,237,0.12);"
+    "  border-left: 3px solid #63b3ed;"
+    "}"
+    ".conv-row-title {"
+    "  font-size: 12px;"
+    "  font-weight: 600;"
+    "}"
+    ".conv-row-meta {"
+    "  font-size: 10px;"
+    "  color: rgba(255,255,255,0.35);"
+    "  margin-top: 2px;"
+    "}"
+    ".conv-delete-btn {"
+    "  padding: 2px 6px;"
+    "  border-radius: 4px;"
+    "  opacity: 0.5;"
+    "}"
+    ".conv-delete-btn:hover {"
+    "  background: rgba(252,129,74,0.2);"
+    "  color: #fc814a;"
+    "  opacity: 1.0;"
+    "}"
+    ".conv-new-btn {"
+    "  border-radius: 6px;"
+    "  margin: 8px;"
+    "  padding: 6px 12px;"
+    "  font-size: 11px;"
+    "}"
+    /* Existing styles */
     ".bubble-user {"
     "  background: rgba(99,179,237,0.18);"
     "  border-radius: 12px 12px 3px 12px;"
@@ -711,6 +780,9 @@ on_agent_token (const gchar *token, gpointer user_data)
     g_string_append (state->accumulated, token);
 }
 
+/* Forward declaration — defined later in Conversation persistence section */
+static void persist_new_messages (AiPanelData *data);
+
 static void
 on_agent_done (const gchar *error_msg, gpointer user_data)
 {
@@ -744,10 +816,427 @@ on_agent_done (const gchar *error_msg, gpointer user_data)
             gtk_widget_destroy (data->streaming_row);
             data->streaming_row = NULL;
         }
+
+        /* ---- Persist the exchange ---- */
+        persist_new_messages (data);
+
+        /* ---- Auto-title after first exchange ---- */
+        if (!data->conv_titled && data->pending_user_text) {
+            gchar *auto_title = ai_conversation_auto_title (data->pending_user_text);
+            ai_conversation_set_title (data->conv_id, auto_title);
+            if (data->conv_title_label)
+                gtk_label_set_text (GTK_LABEL (data->conv_title_label), auto_title);
+            g_free (auto_title);
+            data->conv_titled = TRUE;
+            g_free (data->pending_user_text);
+            data->pending_user_text = NULL;
+        }
     }
 
     g_string_free (state->accumulated, TRUE);
     g_free (state);
+}
+
+/* ================================================================== */
+/* Conversation persistence helpers                                     */
+/* ================================================================== */
+
+/* Format a Unix timestamp as a relative string: "just now", "5m ago", etc. */
+static gchar *
+format_relative_time (gint64 unix_secs)
+{
+    gint64 now  = g_get_real_time () / G_USEC_PER_SEC;
+    gint64 diff = now - unix_secs;
+    if (diff < 0)    diff = 0;
+    if (diff < 60)   return g_strdup ("just now");
+    if (diff < 3600) return g_strdup_printf ("%"G_GINT64_FORMAT"m ago", diff / 60);
+    if (diff < 86400)return g_strdup_printf ("%"G_GINT64_FORMAT"h ago", diff / 3600);
+    if (diff < 604800)return g_strdup_printf ("%"G_GINT64_FORMAT"d ago", diff / 86400);
+    return g_strdup_printf ("%"G_GINT64_FORMAT"w ago", diff / 604800);
+}
+
+/* Save all messages from presend_history_len onward to the conversation file */
+static void
+persist_new_messages (AiPanelData *data)
+{
+    gint total = ai_agent_session_get_message_count (data->session);
+    for (gint i = data->presend_history_len; i < total; i++) {
+        const AiMessage *msg = ai_agent_session_get_message_at (data->session, i);
+        if (!msg) continue;
+        /* Skip system messages — regenerated from context on load */
+        if (msg->role == AI_ROLE_SYSTEM) continue;
+        ai_conversation_append_message (data->conv_id, msg->role, msg->content,
+                                        msg->tool_call_id, msg->tool_name);
+    }
+    ai_conversation_increment_turn (data->conv_id);
+}
+
+/* ================================================================== */
+/* Conversation switcher popover                                        */
+/* ================================================================== */
+
+/* Forward declaration */
+static void clear_chat_ui (AiPanelData *data);
+
+typedef struct {
+    AiPanelData *panel;
+    gchar       *conv_id;   /* owned */
+} ConvActionCtx;
+
+static void
+conv_action_ctx_free (ConvActionCtx *ctx)
+{
+    g_free (ctx->conv_id);
+    g_free (ctx);
+}
+
+/* Load all messages from a saved conversation into the panel */
+static void
+load_conversation_into_panel (AiPanelData *data, const gchar *conv_id)
+{
+    if (!conv_id || !*conv_id) return;
+
+    /* Cancel any in-flight request */
+    if (data->is_streaming) {
+        ai_agent_session_cancel (data->session);
+        gtk_widget_hide (data->status_bar);
+        gtk_spinner_stop (GTK_SPINNER (data->spinner));
+        gtk_widget_set_sensitive (data->send_btn, TRUE);
+        gtk_widget_set_sensitive (data->context_btn, TRUE);
+        gtk_widget_hide (data->cancel_btn);
+        data->is_streaming = FALSE;
+        data->streaming_row = NULL;
+        data->streaming_buf = NULL;
+    }
+
+    /* Reset session (keeps fresh system prompt) */
+    ai_agent_session_reset (data->session);
+
+    /* Clear chat UI */
+    clear_chat_ui (data);
+
+    /* Load messages from file */
+    GPtrArray *msgs = ai_conversation_load_messages (conv_id);
+    if (!msgs) return;
+
+    /* Load messages into session history */
+    ai_agent_session_load_history (data->session, msgs);
+
+    /* Rebuild UI: show user and assistant messages as bubbles */
+    for (guint i = 0; i < msgs->len; i++) {
+        const AiMessage *msg = (const AiMessage *) g_ptr_array_index (msgs, i);
+        if (msg->role == AI_ROLE_USER) {
+            add_complete_bubble (data, "YOU", msg->content ? msg->content : "", TRUE);
+        } else if (msg->role == AI_ROLE_ASSISTANT) {
+            add_complete_bubble (data, "AETHER AI", msg->content ? msg->content : "", FALSE);
+        }
+        /* Tool messages are not shown in the UI — they're internal context */
+    }
+    g_ptr_array_free (msgs, TRUE);
+
+    /* Switch to this conversation */
+    g_free (data->conv_id);
+    data->conv_id             = g_strdup (conv_id);
+    data->presend_history_len = ai_agent_session_get_message_count (data->session);
+    data->conv_titled         = TRUE;   /* Loaded conversations already have titles */
+    g_free (data->pending_user_text);
+    data->pending_user_text   = NULL;
+
+    /* Close popover */
+    if (data->conv_popover)
+        gtk_popover_popdown (GTK_POPOVER (data->conv_popover));
+
+    /* Update window title label if present */
+    if (data->conv_title_label) {
+        GPtrArray *all = ai_conversation_list_all ();
+        for (guint i = 0; i < all->len; i++) {
+            const AiConversationMeta *m = (const AiConversationMeta *) g_ptr_array_index (all, i);
+            if (g_strcmp0 (m->id, conv_id) == 0) {
+                gtk_label_set_text (GTK_LABEL (data->conv_title_label), m->title);
+                break;
+            }
+        }
+        g_ptr_array_free (all, TRUE);
+    }
+}
+
+static void
+on_conv_load_clicked (GtkButton *btn, gpointer user_data)
+{
+    (void) btn;
+    ConvActionCtx *ctx = (ConvActionCtx *) user_data;
+    load_conversation_into_panel (ctx->panel, ctx->conv_id);
+}
+
+static void
+on_conv_delete_clicked (GtkButton *btn, gpointer user_data)
+{
+    (void) btn;
+    ConvActionCtx *ctx  = (ConvActionCtx *) user_data;
+    AiPanelData   *data = ctx->panel;
+
+    /* Confirm deletion */
+    GtkWidget *dialog = gtk_message_dialog_new (
+        data->window ? GTK_WINDOW (data->window) : NULL,
+        GTK_DIALOG_MODAL,
+        GTK_MESSAGE_QUESTION,
+        GTK_BUTTONS_YES_NO,
+        "Delete this conversation? This cannot be undone.");
+    gtk_window_set_title (GTK_WINDOW (dialog), "Delete Conversation");
+    gint resp = gtk_dialog_run (GTK_DIALOG (dialog));
+    gtk_widget_destroy (dialog);
+
+    if (resp != GTK_RESPONSE_YES) return;
+
+    ai_conversation_delete (ctx->conv_id);
+
+    /* If this was the active conversation, start a new one */
+    if (g_strcmp0 (data->conv_id, ctx->conv_id) == 0) {
+        g_free (data->conv_id);
+        data->conv_id   = ai_conversation_new_id ();
+        data->conv_titled = FALSE;
+        g_free (data->pending_user_text);
+        data->pending_user_text = NULL;
+        ai_agent_session_reset (data->session);
+        clear_chat_ui (data);
+        if (data->conv_title_label)
+            gtk_label_set_text (GTK_LABEL (data->conv_title_label), "New Chat");
+    }
+
+    /* Refresh the popover list */
+    if (data->conv_popover) {
+        gtk_popover_popdown (GTK_POPOVER (data->conv_popover));
+    }
+}
+
+/* Populate the conversation list box inside the popover */
+static void
+refresh_conv_list (AiPanelData *data)
+{
+    if (!data->conv_list_box) return;
+
+    /* Clear existing rows */
+    GList *rows = gtk_container_get_children (GTK_CONTAINER (data->conv_list_box));
+    for (GList *l = rows; l; l = l->next)
+        gtk_widget_destroy (GTK_WIDGET (l->data));
+    g_list_free (rows);
+
+    GPtrArray *all = ai_conversation_list_all ();
+
+    if (all->len == 0) {
+        GtkWidget *empty = gtk_label_new ("No saved conversations");
+        gtk_style_context_add_class (gtk_widget_get_style_context (empty), "dim-label");
+        gtk_widget_set_margin_top    (empty, 16);
+        gtk_widget_set_margin_bottom (empty, 16);
+        gtk_list_box_insert (GTK_LIST_BOX (data->conv_list_box), empty, -1);
+        gtk_widget_show (empty);
+        g_ptr_array_free (all, TRUE);
+        return;
+    }
+
+    for (guint i = 0; i < all->len; i++) {
+        const AiConversationMeta *meta =
+            (const AiConversationMeta *) g_ptr_array_index (all, i);
+
+        gboolean is_active = (g_strcmp0 (meta->id, data->conv_id) == 0);
+
+        GtkWidget *row = gtk_list_box_row_new ();
+        gtk_list_box_row_set_activatable (GTK_LIST_BOX_ROW (row), FALSE);
+        gtk_list_box_row_set_selectable  (GTK_LIST_BOX_ROW (row), FALSE);
+
+        GtkWidget *hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
+        gtk_style_context_add_class (gtk_widget_get_style_context (hbox), "conv-row");
+        if (is_active)
+            gtk_style_context_add_class (gtk_widget_get_style_context (hbox), "conv-row-active");
+
+        /* Text column */
+        GtkWidget *vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
+        gtk_widget_set_hexpand (vbox, TRUE);
+
+        /* Title */
+        gchar *safe_title = g_markup_escape_text (meta->title, -1);
+        gchar *title_markup;
+        if (is_active)
+            title_markup = g_strdup_printf ("<b>%s</b>", safe_title);
+        else
+            title_markup = g_strdup (safe_title);
+        g_free (safe_title);
+
+        GtkWidget *title_lbl = gtk_label_new (NULL);
+        gtk_label_set_markup (GTK_LABEL (title_lbl), title_markup);
+        gtk_label_set_ellipsize (GTK_LABEL (title_lbl), PANGO_ELLIPSIZE_END);
+        gtk_label_set_max_width_chars (GTK_LABEL (title_lbl), 28);
+        gtk_widget_set_halign (title_lbl, GTK_ALIGN_START);
+        gtk_style_context_add_class (gtk_widget_get_style_context (title_lbl), "conv-row-title");
+        g_free (title_markup);
+
+        /* Meta: turns count + relative time */
+        gchar *rel_time = format_relative_time (meta->modified_at);
+        gchar *meta_text = g_strdup_printf ("%d turn%s • %s",
+            meta->turn_count,
+            meta->turn_count == 1 ? "" : "s",
+            rel_time);
+        g_free (rel_time);
+
+        GtkWidget *meta_lbl = gtk_label_new (meta_text);
+        g_free (meta_text);
+        gtk_widget_set_halign (meta_lbl, GTK_ALIGN_START);
+        gtk_style_context_add_class (gtk_widget_get_style_context (meta_lbl), "conv-row-meta");
+
+        gtk_box_pack_start (GTK_BOX (vbox), title_lbl, FALSE, FALSE, 0);
+        gtk_box_pack_start (GTK_BOX (vbox), meta_lbl,  FALSE, FALSE, 0);
+
+        /* Load button (only for inactive conversations) */
+        if (!is_active) {
+            ConvActionCtx *load_ctx = g_new0 (ConvActionCtx, 1);
+            load_ctx->panel   = data;
+            load_ctx->conv_id = g_strdup (meta->id);
+
+            GtkWidget *load_btn = gtk_button_new_with_label ("↵ Open");
+            gtk_style_context_add_class (gtk_widget_get_style_context (load_btn), "flat");
+            gtk_widget_set_valign (load_btn, GTK_ALIGN_CENTER);
+            g_signal_connect_data (load_btn, "clicked",
+                                   G_CALLBACK (on_conv_load_clicked),
+                                   load_ctx, (GClosureNotify)conv_action_ctx_free, 0);
+            gtk_box_pack_end (GTK_BOX (hbox), load_btn, FALSE, FALSE, 0);
+        } else {
+            GtkWidget *active_lbl = gtk_label_new ("● active");
+            gtk_style_context_add_class (gtk_widget_get_style_context (active_lbl), "dim-label");
+            gtk_widget_set_valign (active_lbl, GTK_ALIGN_CENTER);
+            gtk_box_pack_end (GTK_BOX (hbox), active_lbl, FALSE, FALSE, 0);
+        }
+
+        /* Delete button */
+        {
+            ConvActionCtx *del_ctx = g_new0 (ConvActionCtx, 1);
+            del_ctx->panel   = data;
+            del_ctx->conv_id = g_strdup (meta->id);
+
+            GtkWidget *del_btn = gtk_button_new_from_icon_name ("user-trash-symbolic",
+                                                                 GTK_ICON_SIZE_SMALL_TOOLBAR);
+            gtk_style_context_add_class (gtk_widget_get_style_context (del_btn), "conv-delete-btn");
+            gtk_button_set_relief (GTK_BUTTON (del_btn), GTK_RELIEF_NONE);
+            gtk_widget_set_valign (del_btn, GTK_ALIGN_CENTER);
+            gtk_widget_set_tooltip_text (del_btn, "Delete this conversation");
+            g_signal_connect_data (del_btn, "clicked",
+                                   G_CALLBACK (on_conv_delete_clicked),
+                                   del_ctx, (GClosureNotify)conv_action_ctx_free, 0);
+            gtk_box_pack_end (GTK_BOX (hbox), del_btn, FALSE, FALSE, 0);
+        }
+
+        gtk_box_pack_start (GTK_BOX (hbox), vbox, TRUE, TRUE, 0);
+        gtk_container_add (GTK_CONTAINER (row), hbox);
+        gtk_list_box_insert (GTK_LIST_BOX (data->conv_list_box), row, -1);
+        gtk_widget_show_all (row);
+    }
+
+    g_ptr_array_free (all, TRUE);
+}
+
+static void
+on_conv_btn_clicked (GtkButton *btn, gpointer user_data)
+{
+    (void) btn;
+    AiPanelData *data = (AiPanelData *) user_data;
+    refresh_conv_list (data);
+    gtk_popover_popup (GTK_POPOVER (data->conv_popover));
+}
+
+static void
+on_conv_new_btn_clicked (GtkButton *btn, gpointer user_data)
+{
+    (void) btn;
+    AiPanelData *data = (AiPanelData *) user_data;
+    gtk_popover_popdown (GTK_POPOVER (data->conv_popover));
+
+    /* Trigger "new chat" */
+    if (data->is_streaming) {
+        ai_agent_session_cancel (data->session);
+        gtk_widget_hide (data->status_bar);
+        gtk_spinner_stop (GTK_SPINNER (data->spinner));
+        gtk_widget_set_sensitive (data->send_btn, TRUE);
+        gtk_widget_set_sensitive (data->context_btn, TRUE);
+        gtk_widget_hide (data->cancel_btn);
+        data->is_streaming = FALSE;
+        data->streaming_row = NULL;
+        data->streaming_buf = NULL;
+    }
+    ai_agent_session_reset (data->session);
+    clear_chat_ui (data);
+
+    g_free (data->conv_id);
+    data->conv_id             = ai_conversation_new_id ();
+    data->conv_titled         = FALSE;
+    data->presend_history_len = ai_agent_session_get_message_count (data->session);
+    g_free (data->pending_user_text);
+    data->pending_user_text   = NULL;
+
+    if (data->conv_title_label)
+        gtk_label_set_text (GTK_LABEL (data->conv_title_label), "New Chat");
+}
+
+/* Build the conversations popover (called once) */
+static GtkWidget *
+build_conv_popover (GtkWidget *relative_to, AiPanelData *data)
+{
+    GtkWidget *popover = gtk_popover_new (relative_to);
+    gtk_popover_set_position (GTK_POPOVER (popover), GTK_POS_BOTTOM);
+    gtk_widget_set_size_request (popover, 300, -1);
+    gtk_style_context_add_class (gtk_widget_get_style_context (popover), "conv-popover");
+
+    GtkWidget *vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+
+    /* Header */
+    GtkWidget *hdr = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_style_context_add_class (gtk_widget_get_style_context (hdr), "conv-popover-header");
+    gtk_widget_set_margin_start  (hdr, 12);
+    gtk_widget_set_margin_end    (hdr, 8);
+    gtk_widget_set_margin_top    (hdr, 8);
+    gtk_widget_set_margin_bottom (hdr, 8);
+
+    GtkWidget *hdr_lbl = gtk_label_new ("💬 Conversations");
+    gtk_widget_set_hexpand (hdr_lbl, TRUE);
+    gtk_widget_set_halign  (hdr_lbl, GTK_ALIGN_START);
+
+    GtkWidget *new_btn = gtk_button_new_with_label ("+ New");
+    gtk_style_context_add_class (gtk_widget_get_style_context (new_btn), "conv-new-btn");
+    g_signal_connect (new_btn, "clicked", G_CALLBACK (on_conv_new_btn_clicked), data);
+
+    gtk_box_pack_start (GTK_BOX (hdr), hdr_lbl,  TRUE,  TRUE,  0);
+    gtk_box_pack_start (GTK_BOX (hdr), new_btn,  FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (vbox), hdr, FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (vbox),
+        gtk_separator_new (GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
+
+    /* Scrollable conversation list */
+    GtkWidget *scroll = gtk_scrolled_window_new (NULL, NULL);
+    gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroll),
+                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_size_request (scroll, -1, 280);
+
+    data->conv_list_box = gtk_list_box_new ();
+    gtk_list_box_set_selection_mode (GTK_LIST_BOX (data->conv_list_box), GTK_SELECTION_NONE);
+    gtk_container_add (GTK_CONTAINER (scroll), data->conv_list_box);
+    gtk_box_pack_start (GTK_BOX (vbox), scroll, TRUE, TRUE, 0);
+
+    gtk_container_add (GTK_CONTAINER (popover), vbox);
+    gtk_widget_show_all (vbox);
+    return popover;
+}
+
+/* ================================================================== */
+/* Chat UI clear helper                                                 */
+/* ================================================================== */
+
+static void
+clear_chat_ui (AiPanelData *data)
+{
+    GList *rows = gtk_container_get_children (GTK_CONTAINER (data->chat_list));
+    for (GList *l = rows; l; l = l->next)
+        gtk_widget_destroy (GTK_WIDGET (l->data));
+    g_list_free (rows);
+    data->streaming_row = NULL;
+    data->streaming_buf = NULL;
 }
 
 /* ================================================================== */
@@ -815,6 +1304,13 @@ do_send (AiPanelData *data)
         settings->model_name ? settings->model_name : "?");
     gtk_label_set_text (GTK_LABEL (data->model_badge), badge_text);
     g_free (badge_text);
+
+    /* Record history length before the agent appends the user message */
+    data->presend_history_len = ai_agent_session_get_message_count (data->session);
+
+    /* Save first user message for auto-titling */
+    if (!data->conv_titled && !data->pending_user_text)
+        data->pending_user_text = g_strdup (final_prompt);
 
     /* Send to agent */
     StreamState *state       = g_new0 (StreamState, 1);
@@ -899,13 +1395,18 @@ on_new_chat_clicked (GtkButton *btn, gpointer user_data)
     ai_agent_session_reset (data->session);
 
     /* Clear chat UI */
-    GList *rows = gtk_container_get_children (GTK_CONTAINER (data->chat_list));
-    for (GList *l = rows; l; l = l->next)
-        gtk_widget_destroy (GTK_WIDGET (l->data));
-    g_list_free (rows);
+    clear_chat_ui (data);
 
-    data->streaming_row = NULL;
-    data->streaming_buf = NULL;
+    /* Start a fresh conversation */
+    g_free (data->conv_id);
+    data->conv_id             = ai_conversation_new_id ();
+    data->conv_titled         = FALSE;
+    data->presend_history_len = ai_agent_session_get_message_count (data->session);
+    g_free (data->pending_user_text);
+    data->pending_user_text   = NULL;
+
+    if (data->conv_title_label)
+        gtk_label_set_text (GTK_LABEL (data->conv_title_label), "New Chat");
 }
 
 static void
@@ -948,6 +1449,8 @@ free_panel_data (gpointer user_data)
 {
     AiPanelData *data = (AiPanelData *) user_data;
     ai_agent_session_free (data->session);
+    g_free (data->conv_id);
+    g_free (data->pending_user_text);
     g_free (data);
 }
 
@@ -959,6 +1462,23 @@ ai_panel_new (AetherIdeWindow *window)
     AiPanelData *data = g_new0 (AiPanelData, 1);
     data->window      = window;
     data->session     = ai_agent_session_new ("Chat 1");
+
+    /* Initialise or load most-recent conversation */
+    {
+        GPtrArray *existing = ai_conversation_list_all ();
+        if (existing->len > 0) {
+            /* Load the most recent conversation ID (already sorted by modified_at) */
+            const AiConversationMeta *latest =
+                (const AiConversationMeta *) g_ptr_array_index (existing, 0);
+            data->conv_id   = g_strdup (latest->id);
+            data->conv_titled = TRUE;   /* Will be loaded from file */
+        } else {
+            data->conv_id   = ai_conversation_new_id ();
+            data->conv_titled = FALSE;
+        }
+        data->presend_history_len = ai_agent_session_get_message_count (data->session);
+        g_ptr_array_free (existing, TRUE);
+    }
 
     GtkWidget *root = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
     gtk_style_context_add_class (gtk_widget_get_style_context (root), "ai-panel");
@@ -979,6 +1499,22 @@ ai_panel_new (AetherIdeWindow *window)
     gtk_label_set_markup (GTK_LABEL (title), "<b>AetherAI</b>");
     gtk_widget_set_hexpand (title, FALSE);
 
+    /* Current conversation title */
+    data->conv_title_label = gtk_label_new ("New Chat");
+    gtk_label_set_ellipsize (GTK_LABEL (data->conv_title_label), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars (GTK_LABEL (data->conv_title_label), 18);
+    gtk_style_context_add_class (gtk_widget_get_style_context (data->conv_title_label),
+                                 "conv-title-label");
+    gtk_widget_set_hexpand (data->conv_title_label, TRUE);
+    gtk_widget_set_halign  (data->conv_title_label, GTK_ALIGN_START);
+
+    /* Conversations history button */
+    data->conv_btn = gtk_button_new_from_icon_name ("document-open-recent-symbolic",
+                                                     GTK_ICON_SIZE_SMALL_TOOLBAR);
+    gtk_button_set_relief (GTK_BUTTON (data->conv_btn), GTK_RELIEF_NONE);
+    gtk_widget_set_tooltip_text (data->conv_btn, "Conversation History");
+    g_signal_connect (data->conv_btn, "clicked", G_CALLBACK (on_conv_btn_clicked), data);
+
     /* Model badge */
     {
         const AiSettings *settings = ai_settings_get ();
@@ -990,8 +1526,7 @@ ai_panel_new (AetherIdeWindow *window)
     }
     gtk_style_context_add_class (gtk_widget_get_style_context (data->model_badge),
                                  "model-badge");
-    gtk_widget_set_hexpand (data->model_badge, TRUE);
-    gtk_widget_set_halign  (data->model_badge, GTK_ALIGN_START);
+    gtk_widget_set_halign  (data->model_badge, GTK_ALIGN_END);
 
     /* New chat button */
     GtkWidget *new_btn = gtk_button_new_from_icon_name ("list-add-symbolic",
@@ -1007,10 +1542,12 @@ ai_panel_new (AetherIdeWindow *window)
     gtk_widget_set_tooltip_text (settings_btn, "AI Settings");
     g_signal_connect (settings_btn, "clicked", G_CALLBACK (on_settings_clicked), data);
 
-    gtk_box_pack_start (GTK_BOX (header), title,        FALSE, FALSE, 0);
-    gtk_box_pack_start (GTK_BOX (header), data->model_badge, TRUE, TRUE, 4);
-    gtk_box_pack_start (GTK_BOX (header), new_btn,      FALSE, FALSE, 0);
-    gtk_box_pack_start (GTK_BOX (header), settings_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (header), title,            FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (header), data->conv_title_label, TRUE,  TRUE,  2);
+    gtk_box_pack_start (GTK_BOX (header), data->model_badge,      FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (header), data->conv_btn,         FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (header), new_btn,                FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (header), settings_btn,           FALSE, FALSE, 0);
 
     gtk_box_pack_start (GTK_BOX (root), header, FALSE, FALSE, 0);
     gtk_box_pack_start (GTK_BOX (root),
@@ -1122,6 +1659,15 @@ ai_panel_new (AetherIdeWindow *window)
     gtk_widget_show_all (root);
     gtk_widget_hide (data->status_bar);
     gtk_widget_hide (data->cancel_btn);
+
+    /* Build conversation popover (attached to conv_btn) */
+    data->conv_popover = build_conv_popover (data->conv_btn, data);
+
+    /* If we have a saved conversation, load it now */
+    if (data->conv_titled && data->conv_id) {
+        /* conv_titled was set TRUE because we have an existing conv — load it */
+        load_conversation_into_panel (data, data->conv_id);
+    }
 
     return root;
 }
