@@ -2,6 +2,7 @@
 
 #include "editor_tab.h"
 #include "vcodex_window_private.h"
+#include "git_gutter.h"
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                     */
@@ -61,6 +62,7 @@ create_editor_tab (AetherIdeWindow *self,
     if (filepath) {
         g_object_set_data_full (G_OBJECT (source_view), "filepath",
                                 g_strdup (filepath), g_free);
+        git_gutter_attach (GTK_SOURCE_VIEW (source_view), filepath);
     }
 
     gtk_source_view_set_show_line_numbers     (GTK_SOURCE_VIEW (source_view), TRUE);

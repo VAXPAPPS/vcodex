@@ -25,6 +25,10 @@
 #include "ai_agent.h"
 #include "ai_settings.h"
 #include "theme_manager.h"
+#include "git_manager.h"
+#include "git_panel.h"
+#include "git_status_bar.h"
+#include "git_log_view.h"
 
 /* ------------------------------------------------------------------ */
 /* Struct definition                                                    */
@@ -203,6 +207,7 @@ vcodex_window_init (AetherIdeWindow *self)
     theme_manager_init ();
     ai_settings_init ();
     ai_agent_init (self); /* initializes tools + agent session */
+    git_manager_init (NULL); /* init libgit2 */
 
     /* ---- Header bar ---- */
     GtkWidget *header_bar = gtk_header_bar_new ();
@@ -217,6 +222,10 @@ vcodex_window_init (AetherIdeWindow *self)
     gtk_header_bar_pack_start (GTK_HEADER_BAR (header_bar), open_btn);
     gtk_header_bar_pack_start (GTK_HEADER_BAR (header_bar), open_folder_btn);
     gtk_header_bar_pack_start (GTK_HEADER_BAR (header_bar), save_btn);
+    
+    GtkWidget *git_status_bar = aether_git_status_bar_new ();
+    gtk_header_bar_pack_start (GTK_HEADER_BAR (header_bar), git_status_bar);
+    
     gtk_header_bar_pack_end   (GTK_HEADER_BAR (header_bar), cmd_btn);
 
     g_signal_connect (open_btn,        "clicked", G_CALLBACK (on_open_clicked),        self);
@@ -277,6 +286,9 @@ vcodex_window_init (AetherIdeWindow *self)
     gtk_widget_set_margin_bottom (search_label, 10);
     gtk_box_pack_start (GTK_BOX (self->search_page), search_label, FALSE, FALSE, 0);
 
+    /* Git page */
+    GtkWidget *git_page = aether_git_panel_new ();
+
     self->sidebar_search_entry = gtk_search_entry_new ();
     gtk_widget_set_margin_start  (self->sidebar_search_entry, 5);
     gtk_widget_set_margin_end    (self->sidebar_search_entry, 5);
@@ -297,17 +309,28 @@ vcodex_window_init (AetherIdeWindow *self)
     gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (search_btn), FALSE);
     gtk_style_context_add_class (gtk_widget_get_style_context (search_btn), "flat");
 
+    GtkWidget *git_btn = gtk_radio_button_new_from_widget (GTK_RADIO_BUTTON (explorer_btn));
+    gtk_button_set_image (GTK_BUTTON (git_btn),
+        gtk_image_new_from_icon_name ("vcs-changed-symbolic", GTK_ICON_SIZE_LARGE_TOOLBAR));
+    gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (git_btn), FALSE);
+    gtk_style_context_add_class (gtk_widget_get_style_context (git_btn), "flat");
+    gtk_widget_set_tooltip_text (git_btn, "Source Control");
+
     gtk_box_pack_start (GTK_BOX (self->activity_bar), explorer_btn, FALSE, FALSE, 0);
     gtk_box_pack_start (GTK_BOX (self->activity_bar), search_btn,   FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (self->activity_bar), git_btn,      FALSE, FALSE, 0);
 
     g_signal_connect (explorer_btn, "toggled", G_CALLBACK (on_activity_btn_toggled), self->explorer_page);
     g_signal_connect (search_btn,   "toggled", G_CALLBACK (on_activity_btn_toggled), self->search_page);
+    g_signal_connect (git_btn,      "toggled", G_CALLBACK (on_activity_btn_toggled), git_page);
     
     g_signal_connect (explorer_btn, "button-press-event", G_CALLBACK (on_activity_btn_button_press), self);
     g_signal_connect (search_btn,   "button-press-event", G_CALLBACK (on_activity_btn_button_press), self);
+    g_signal_connect (git_btn,      "button-press-event", G_CALLBACK (on_activity_btn_button_press), self);
 
     gtk_stack_add_named (GTK_STACK (self->sidebar_stack), self->explorer_page, "explorer");
     gtk_stack_add_named (GTK_STACK (self->sidebar_stack), self->search_page,   "search");
+    gtk_stack_add_named (GTK_STACK (self->sidebar_stack), git_page,            "git");
 
     /* File-explorer tree */
     self->tree_store = gtk_tree_store_new (NUM_COLUMNS,

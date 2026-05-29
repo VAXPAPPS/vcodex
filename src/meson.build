@@ -18,6 +18,12 @@ vcodex_sources = [
   'ai_tools.c',        # Layer 4: Native tools
   'ai_agent.c',        # Layer 5: Orchestrator
   'ai_panel.c',        # Layer 6: UI
+  # Git subsystem
+  'git_manager.c',
+  'git_panel.c',
+  'git_gutter.c',
+  'git_status_bar.c',
+  'git_log_view.c',
   # Other modules
   'theme_manager.c',
   'lsp_client.c'
@@ -30,6 +36,7 @@ vcodex_deps = [
   vte_dep,
   soup_dep,
   json_dep,
+  ggit_dep,
 ]
 
 # Add libsecret if available

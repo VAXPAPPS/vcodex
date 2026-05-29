@@ -56,6 +56,13 @@ static const ToolDefault g_defaults[] = {
     { "apply_diff",          TOOL_PERM_AUTO    },
     { "get_diagnostics",     TOOL_PERM_AUTO    },
     { "web_fetch",           TOOL_PERM_AUTO    },
+    { "git_status",          TOOL_PERM_AUTO    },
+    { "git_diff",            TOOL_PERM_AUTO    },
+    { "git_stage",           TOOL_PERM_AUTO    },
+    { "git_unstage",         TOOL_PERM_AUTO    },
+    { "git_commit",          TOOL_PERM_CONFIRM },
+    { "git_push",            TOOL_PERM_CONFIRM },
+    { "git_pull",            TOOL_PERM_CONFIRM },
     { NULL, 0 }
 };
 
@@ -359,6 +366,71 @@ ai_tools_get_definitions (void)
         add_tool (arr, "web_fetch",
             "Fetch the content of a URL (for reading documentation or APIs).",
             p, req);
+    }
+
+    /* ---- git_status ---- */
+    {
+        JsonObject *p = json_object_new ();
+        add_tool (arr, "git_status",
+            "Get the current git status (staged and unstaged files).",
+            p, NULL);
+    }
+
+    /* ---- git_diff ---- */
+    {
+        JsonObject *p = json_object_new ();
+        add_tool (arr, "git_diff",
+            "Get the git diff for unstaged changes.",
+            p, NULL);
+    }
+
+    /* ---- git_stage ---- */
+    {
+        JsonObject *p = json_object_new ();
+        json_object_set_object_member (p, "path",
+            make_string_prop ("Path to stage. Use '.' for all."));
+        const gchar *req[] = { "path", NULL };
+        add_tool (arr, "git_stage",
+            "Stage a file for commit.",
+            p, req);
+    }
+
+    /* ---- git_unstage ---- */
+    {
+        JsonObject *p = json_object_new ();
+        json_object_set_object_member (p, "path",
+            make_string_prop ("Path to unstage."));
+        const gchar *req[] = { "path", NULL };
+        add_tool (arr, "git_unstage",
+            "Unstage a file.",
+            p, req);
+    }
+
+    /* ---- git_commit ---- */
+    {
+        JsonObject *p = json_object_new ();
+        json_object_set_object_member (p, "message",
+            make_string_prop ("Commit message."));
+        const gchar *req[] = { "message", NULL };
+        add_tool (arr, "git_commit",
+            "Commit staged changes.",
+            p, req);
+    }
+
+    /* ---- git_push ---- */
+    {
+        JsonObject *p = json_object_new ();
+        add_tool (arr, "git_push",
+            "Push commits to remote.",
+            p, NULL);
+    }
+
+    /* ---- git_pull ---- */
+    {
+        JsonObject *p = json_object_new ();
+        add_tool (arr, "git_pull",
+            "Pull commits from remote.",
+            p, NULL);
     }
 
     JsonNode *node = json_node_new (JSON_NODE_ARRAY);
@@ -1012,6 +1084,92 @@ tool_web_fetch (JsonObject *args)
 }
 
 /* ================================================================== */
+/* Git Tools                                                            */
+/* ================================================================== */
+
+#include "git_manager.h"
+
+static gchar *
+tool_git_status (JsonObject *args)
+{
+    (void) args;
+    GPtrArray *st = git_manager_get_status();
+    if (!st || st->len == 0) {
+        if (st) g_ptr_array_free(st, TRUE);
+        return g_strdup("No changes.");
+    }
+    GString *out = g_string_new("");
+    for (guint i = 0; i < st->len; i++) {
+        GitFileEntry *e = g_ptr_array_index(st, i);
+        g_string_append_printf(out, "%s %s\n", (e->status & GIT_FILE_STATUS_STAGED) ? "S" : "U", e->path);
+    }
+    g_ptr_array_free(st, TRUE);
+    return g_string_free(out, FALSE);
+}
+
+static gchar *
+tool_git_diff (JsonObject *args)
+{
+    (void) args;
+    /* Basic unstaged diff via command line for now as manager diff API is TODO */
+    const gchar *ws = g_tool_ctx.workspace_path;
+    if (!ws) return g_strdup("No workspace.");
+    gchar *cmd = g_strdup_printf("git -C %s diff", g_shell_quote(ws));
+    gchar *out = NULL;
+    g_spawn_command_line_sync(cmd, &out, NULL, NULL, NULL);
+    g_free(cmd);
+    return out ? out : g_strdup("");
+}
+
+static gchar *
+tool_git_stage (JsonObject *args)
+{
+    const gchar *path = json_object_has_member(args, "path") ? json_object_get_string_member(args, "path") : NULL;
+    if (!path) return g_strdup("Error: path required.");
+    if (g_strcmp0(path, ".") == 0) {
+        if (git_manager_stage_all()) return g_strdup("Staged all changes.");
+        return g_strdup("Failed to stage all.");
+    }
+    if (git_manager_stage_file(path)) return g_strdup_printf("Staged: %s", path);
+    return g_strdup_printf("Failed to stage: %s", path);
+}
+
+static gchar *
+tool_git_unstage (JsonObject *args)
+{
+    const gchar *path = json_object_has_member(args, "path") ? json_object_get_string_member(args, "path") : NULL;
+    if (!path) return g_strdup("Error: path required.");
+    if (git_manager_unstage_file(path)) return g_strdup_printf("Unstaged: %s", path);
+    return g_strdup_printf("Failed to unstage: %s", path);
+}
+
+static gchar *
+tool_git_commit (JsonObject *args)
+{
+    const gchar *msg = json_object_has_member(args, "message") ? json_object_get_string_member(args, "message") : NULL;
+    if (!msg) return g_strdup("Error: message required.");
+    if (git_manager_commit(msg)) return g_strdup("Committed successfully.");
+    return g_strdup("Failed to commit.");
+}
+
+static gchar *
+tool_git_push (JsonObject *args)
+{
+    (void) args;
+    if (git_manager_push()) return g_strdup("Pushed successfully.");
+    return g_strdup("Failed to push.");
+}
+
+static gchar *
+tool_git_pull (JsonObject *args)
+{
+    (void) args;
+    if (git_manager_pull()) return g_strdup("Pulled successfully.");
+    return g_strdup("Failed to pull.");
+}
+
+
+/* ================================================================== */
 /* Dispatcher                                                           */
 /* ================================================================== */
 
@@ -1056,6 +1214,13 @@ ai_tools_execute (const gchar *tool_name, const gchar *args_json)
     else if (g_strcmp0 (tool_name, "apply_diff")          == 0) result = tool_apply_diff (args);
     else if (g_strcmp0 (tool_name, "get_diagnostics")     == 0) result = tool_get_diagnostics (args);
     else if (g_strcmp0 (tool_name, "web_fetch")           == 0) result = tool_web_fetch (args);
+    else if (g_strcmp0 (tool_name, "git_status")          == 0) result = tool_git_status (args);
+    else if (g_strcmp0 (tool_name, "git_diff")            == 0) result = tool_git_diff (args);
+    else if (g_strcmp0 (tool_name, "git_stage")           == 0) result = tool_git_stage (args);
+    else if (g_strcmp0 (tool_name, "git_unstage")         == 0) result = tool_git_unstage (args);
+    else if (g_strcmp0 (tool_name, "git_commit")          == 0) result = tool_git_commit (args);
+    else if (g_strcmp0 (tool_name, "git_push")            == 0) result = tool_git_push (args);
+    else if (g_strcmp0 (tool_name, "git_pull")            == 0) result = tool_git_pull (args);
     else result = g_strdup_printf ("Unknown tool: '%s'", tool_name);
 
     g_object_unref (parser);

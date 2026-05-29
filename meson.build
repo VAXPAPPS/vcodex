@@ -10,6 +10,7 @@ gio_dep          = dependency('gio-2.0')
 vte_dep          = dependency('vte-2.91')
 soup_dep         = dependency('libsoup-3.0')
 json_dep         = dependency('json-glib-1.0')
+ggit_dep         = dependency('libgit2-glib-1.0')
 
 # Optional: libsecret for secure API key storage in GNOME Keyring
 secret_dep = dependency('libsecret-1', required: false)

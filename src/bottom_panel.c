@@ -2,6 +2,7 @@
 
 #include "bottom_panel.h"
 #include "terminal_panel.h"
+#include "git_log_view.h"
 
 static GtkWidget *
 create_placeholder (const gchar *text)
@@ -42,6 +43,10 @@ bottom_panel_new (void)
     // 5. Ports
     GtkWidget *ports_page = create_placeholder ("No forwarded ports.");
     gtk_notebook_append_page (GTK_NOTEBOOK (notebook), ports_page, gtk_label_new ("Ports"));
+
+    // 6. Git Log
+    GtkWidget *git_log_page = aether_git_log_view_new ();
+    gtk_notebook_append_page (GTK_NOTEBOOK (notebook), git_log_page, gtk_label_new ("Git Log"));
 
     // Make Terminal the default selected tab
     gtk_notebook_set_current_page (GTK_NOTEBOOK (notebook), term_idx);
