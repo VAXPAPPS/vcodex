@@ -150,8 +150,13 @@ aether_git_log_view_refresh (AetherGitLogView *self)
         GtkTreeIter iter;
         
         GDateTime *dt = g_date_time_new_from_unix_local (c->timestamp);
-        gchar *time_str = g_date_time_format (dt, "%Y-%m-%d %H:%M");
-        g_date_time_unref (dt);
+        gchar *time_str = NULL;
+        if (dt) {
+            time_str = g_date_time_format (dt, "%Y-%m-%d %H:%M");
+            g_date_time_unref (dt);
+        } else {
+            time_str = g_strdup("Unknown");
+        }
         
         gtk_list_store_append (self->list_store, &iter);
         gtk_list_store_set (self->list_store, &iter,

@@ -2,6 +2,8 @@
 
 #include "git_manager.h"
 #include <libgit2-glib/ggit.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 /* ------------------------------------------------------------------ */
 /* Global State                                                         */
@@ -9,6 +11,7 @@
 
 static GgitRepository *repo_instance = NULL;
 static GObject        *signal_hub    = NULL;
+static gchar          *workspace_dir_path = NULL;
 
 /* We use a dummy GObject class to emit "status-changed" signal */
 #define TYPE_GIT_SIGNAL_HUB (git_signal_hub_get_type ())
@@ -73,6 +76,9 @@ git_manager_init (const gchar *workspace_dir)
     }
 
     if (!workspace_dir) return FALSE;
+
+    g_free(workspace_dir_path);
+    workspace_dir_path = g_strdup(workspace_dir);
 
     GFile *location = g_file_new_for_path (workspace_dir);
     GError *error = NULL;
@@ -218,44 +224,98 @@ gboolean git_manager_stage_file (const gchar *path) {
     if (ok) emit_status_changed ();
     return ok;
 }
-gboolean git_manager_unstage_file (const gchar *path) { return FALSE; /* TODO */ }
-gboolean git_manager_stage_all (void) { return FALSE; /* TODO */ }
-gboolean git_manager_discard_file (const gchar *path) { return FALSE; /* TODO */ }
-gboolean git_manager_commit (const gchar *message) {
-    if (!repo_instance || !message) return FALSE;
-    GError *error = NULL;
-    GgitIndex *index = ggit_repository_get_index (repo_instance, &error);
-    if (!index) return FALSE;
-    GgitOId *tree_id = ggit_index_write_tree (index, &error);
-    g_object_unref (index);
-    if (!tree_id) return FALSE;
-    GgitTree *tree = ggit_repository_lookup_tree (repo_instance, tree_id, &error);
-    g_object_unref (tree_id);
-    if (!tree) return FALSE;
+gboolean git_manager_unstage_file (const gchar *path) {
+    if (!workspace_dir_path || !path) return FALSE;
+    gchar *quoted_ws = g_shell_quote(workspace_dir_path);
+    gchar *quoted_path = g_shell_quote(path);
+    gchar *cmd = g_strdup_printf("git -C %s reset HEAD -- %s", quoted_ws, quoted_path);
+    g_free(quoted_ws);
+    g_free(quoted_path);
     
-    GgitSignature *sig = ggit_signature_new_now ("Aether User", "user@vcodex.ide", &error);
-    GgitRef *head = ggit_repository_get_head (repo_instance, NULL);
-    GgitCommit *parent = NULL;
-    if (head) {
-        GgitOId *target = ggit_ref_get_target (head);
-        parent = ggit_repository_lookup_commit (repo_instance, target, NULL);
-        g_object_unref (head);
-    }
-    
-    GgitCommit *parents[1] = { parent };
-    GgitOId *commit_id = ggit_repository_create_commit (repo_instance, "HEAD", sig, sig, "UTF-8", message, tree, parent ? parents : NULL, parent ? 1 : 0, &error);
-    
-    if (parent) g_object_unref (parent);
-    g_object_unref (tree);
-    g_object_unref (sig);
-    if (commit_id) {
-        g_object_unref (commit_id);
+    gint status;
+    gboolean res = g_spawn_command_line_sync(cmd, NULL, NULL, &status, NULL);
+    g_free(cmd);
+    if (res && status == 0) {
         emit_status_changed();
         return TRUE;
     }
     return FALSE;
 }
-gboolean git_manager_commit_all (const gchar *message) { return FALSE; /* TODO */ }
+
+gboolean git_manager_stage_all (void) {
+    if (!workspace_dir_path) return FALSE;
+    gchar *quoted_ws = g_shell_quote(workspace_dir_path);
+    gchar *cmd = g_strdup_printf("git -C %s add .", quoted_ws);
+    g_free(quoted_ws);
+    
+    gint status;
+    gboolean res = g_spawn_command_line_sync(cmd, NULL, NULL, &status, NULL);
+    g_free(cmd);
+    if (res && status == 0) {
+        emit_status_changed();
+        return TRUE;
+    }
+    return FALSE;
+}
+
+gboolean git_manager_discard_file (const gchar *path) {
+    if (!workspace_dir_path || !path) return FALSE;
+    gchar *quoted_ws = g_shell_quote(workspace_dir_path);
+    gchar *quoted_path = g_shell_quote(path);
+    gchar *cmd = g_strdup_printf("git -C %s checkout -- %s", quoted_ws, quoted_path);
+    g_free(quoted_ws);
+    g_free(quoted_path);
+    
+    gint status;
+    gboolean res = g_spawn_command_line_sync(cmd, NULL, NULL, &status, NULL);
+    g_free(cmd);
+    if (res && status == 0) {
+        emit_status_changed();
+        return TRUE;
+    }
+    return FALSE;
+}
+gboolean git_manager_commit (const gchar *message) {
+    if (!workspace_dir_path || !message) return FALSE;
+    gchar *quoted_ws = g_shell_quote(workspace_dir_path);
+    gchar *quoted_msg = g_shell_quote(message);
+    gchar *cmd = g_strdup_printf("git -C %s commit -m %s", quoted_ws, quoted_msg);
+    g_free(quoted_ws);
+    g_free(quoted_msg);
+    
+    gint status;
+    gchar *err_out = NULL;
+    gboolean res = g_spawn_command_line_sync(cmd, NULL, &err_out, &status, NULL);
+    g_free(cmd);
+    g_free(err_out);
+    
+    if (res && status == 0) {
+        emit_status_changed();
+        return TRUE;
+    }
+    return FALSE;
+}
+
+gboolean git_manager_commit_all (const gchar *message) {
+    if (!workspace_dir_path || !message) return FALSE;
+    gchar *quoted_ws = g_shell_quote(workspace_dir_path);
+    gchar *quoted_msg = g_shell_quote(message);
+    gchar *cmd = g_strdup_printf("git -C %s commit -a -m %s", quoted_ws, quoted_msg);
+    g_free(quoted_ws);
+    g_free(quoted_msg);
+    
+    gint status;
+    gchar *err_out = NULL;
+    gboolean res = g_spawn_command_line_sync(cmd, NULL, &err_out, &status, NULL);
+    g_free(cmd);
+    g_free(err_out);
+    
+    if (res && status == 0) {
+        emit_status_changed();
+        return TRUE;
+    }
+    return FALSE;
+}
 
 /* ------------------------------------------------------------------ */
 /* Branching                                                          */
@@ -287,20 +347,176 @@ gboolean   git_manager_create_branch (const gchar *name) { return FALSE; /* TODO
 /* Remote                                                             */
 /* ------------------------------------------------------------------ */
 
-gboolean git_manager_fetch (void) { return FALSE; }
-gboolean git_manager_pull (void) { return FALSE; }
-gboolean git_manager_push (void) { return FALSE; }
-gint     git_manager_get_ahead (void) { return 0; }
-gint     git_manager_get_behind (void) { return 0; }
+gboolean git_manager_fetch (void) {
+    if (!workspace_dir_path) return FALSE;
+    gchar *quoted = g_shell_quote(workspace_dir_path);
+    gchar *cmd = g_strdup_printf("git -C %s fetch", quoted);
+    g_free(quoted);
+    
+    gchar *err_out = NULL;
+    gboolean res = g_spawn_command_line_sync(cmd, NULL, &err_out, NULL, NULL);
+    g_free(cmd);
+    g_free(err_out);
+    return res;
+}
+gboolean git_manager_pull (void) {
+    if (!workspace_dir_path) return FALSE;
+    gchar *quoted = g_shell_quote(workspace_dir_path);
+    gchar *cmd = g_strdup_printf("git -C %s pull", quoted);
+    g_free(quoted);
+    
+    gint status;
+    gchar *err_out = NULL;
+    gboolean res = g_spawn_command_line_sync(cmd, NULL, &err_out, &status, NULL);
+    g_free(cmd);
+    g_free(err_out);
+    if (res && status == 0) {
+        emit_status_changed();
+        return TRUE;
+    }
+    return FALSE;
+}
+gboolean git_manager_push (void) {
+    if (!workspace_dir_path) return FALSE;
+    gchar *quoted = g_shell_quote(workspace_dir_path);
+    gchar *cmd = g_strdup_printf("git -C %s push", quoted);
+    g_free(quoted);
+    
+    gint status;
+    gchar *err_out = NULL;
+    gboolean res = g_spawn_command_line_sync(cmd, NULL, &err_out, &status, NULL);
+    g_free(cmd);
+    g_free(err_out);
+    if (res && status == 0) {
+        emit_status_changed();
+        return TRUE;
+    }
+    return FALSE;
+}
+gint git_manager_get_ahead (void) {
+    if (!workspace_dir_path) return 0;
+    gchar *quoted = g_shell_quote(workspace_dir_path);
+    gchar *cmd = g_strdup_printf("git -C %s rev-list --count @{u}..HEAD", quoted);
+    g_free(quoted);
+    
+    gchar *out = NULL;
+    gchar *err_out = NULL;
+    g_spawn_command_line_sync(cmd, &out, &err_out, NULL, NULL);
+    g_free(cmd);
+    g_free(err_out);
+    
+    gint ahead = 0;
+    if (out) { ahead = atoi(out); g_free(out); }
+    return ahead;
+}
+gint git_manager_get_behind (void) {
+    if (!workspace_dir_path) return 0;
+    gchar *quoted = g_shell_quote(workspace_dir_path);
+    gchar *cmd = g_strdup_printf("git -C %s rev-list --count HEAD..@{u}", quoted);
+    g_free(quoted);
+    
+    gchar *out = NULL;
+    gchar *err_out = NULL;
+    g_spawn_command_line_sync(cmd, &out, &err_out, NULL, NULL);
+    g_free(cmd);
+    g_free(err_out);
+    
+    gint behind = 0;
+    if (out) { behind = atoi(out); g_free(out); }
+    return behind;
+}
 
 /* ------------------------------------------------------------------ */
 /* Diff & Log                                                           */
 /* ------------------------------------------------------------------ */
 
-GPtrArray *git_manager_diff_file (const gchar *path) { return NULL; /* TODO */ }
+GPtrArray *git_manager_diff_file (const gchar *path) { 
+    if (!workspace_dir_path || !path) return NULL;
+    
+    gchar *quoted_ws = g_shell_quote(workspace_dir_path);
+    gchar *quoted_path = g_shell_quote(path);
+    gchar *cmd = g_strdup_printf("git -C %s diff -U0 -- %s", quoted_ws, quoted_path);
+    g_free(quoted_ws);
+    g_free(quoted_path);
+    
+    gchar *out = NULL;
+    gchar *err_out = NULL;
+    g_spawn_command_line_sync(cmd, &out, &err_out, NULL, NULL);
+    g_free(cmd);
+    g_free(err_out);
+    
+    if (!out) return NULL;
+    
+    GPtrArray *hunks = g_ptr_array_new_with_free_func((GDestroyNotify)git_hunk_free);
+    gchar **lines = g_strsplit(out, "\n", -1);
+    g_free(out);
+    
+    for (gint i = 0; lines[i]; i++) {
+        if (g_str_has_prefix(lines[i], "@@ ")) {
+            GitHunk *h = g_new0(GitHunk, 1);
+            /* Parse @@ -old_start,old_lines +new_start,new_lines @@ */
+            sscanf(lines[i], "@@ -%d,%d +%d,%d", &h->old_start, &h->old_lines, &h->new_start, &h->new_lines);
+            if (h->old_lines == 0) h->kind = GIT_HUNK_ADDED;
+            else if (h->new_lines == 0) h->kind = GIT_HUNK_REMOVED;
+            else h->kind = GIT_HUNK_MODIFIED;
+            g_ptr_array_add(hunks, h);
+        }
+    }
+    g_strfreev(lines);
+    return hunks;
+}
 void       git_hunk_free (GitHunk *hunk) { if(hunk) { g_free(hunk->content); g_free(hunk); } }
-GPtrArray *git_manager_get_log (guint max_count) { return NULL; /* TODO */ }
-gchar     *git_manager_get_commit_diff (const gchar *sha) { return NULL; /* TODO */ }
+GPtrArray *git_manager_get_log (guint max_count) {
+    if (!workspace_dir_path) return NULL;
+    
+    gchar *quoted_ws = g_shell_quote(workspace_dir_path);
+    gchar *cmd = g_strdup_printf("git -C %s log -n %u --pretty=format:\"%%H|%%h|%%an|%%ae|%%at|%%s\"", quoted_ws, max_count);
+    g_free(quoted_ws);
+    
+    gchar *out = NULL;
+    gchar *err_out = NULL;
+    g_spawn_command_line_sync(cmd, &out, &err_out, NULL, NULL);
+    g_free(cmd);
+    g_free(err_out);
+    if (!out) return NULL;
+    
+    GPtrArray *log = g_ptr_array_new_with_free_func((GDestroyNotify)vcodex_git_commit_free);
+    gchar **lines = g_strsplit(out, "\n", -1);
+    g_free(out);
+    
+    for (gint i = 0; lines[i]; i++) {
+        gchar **parts = g_strsplit(lines[i], "|", 6);
+        if (g_strv_length(parts) == 6) {
+            GitCommit *c = g_new0(GitCommit, 1);
+            c->sha = g_strdup(parts[0]);
+            c->short_sha = g_strdup(parts[1]);
+            c->author = g_strdup(parts[2]);
+            c->email = g_strdup(parts[3]);
+            c->timestamp = g_ascii_strtoll(parts[4], NULL, 10);
+            c->message = g_strdup(parts[5]);
+            g_ptr_array_add(log, c);
+        }
+        g_strfreev(parts);
+    }
+    g_strfreev(lines);
+    return log;
+}
+gchar     *git_manager_get_commit_diff (const gchar *sha) {
+    if (!workspace_dir_path || !sha) return NULL;
+    
+    gchar *quoted_ws = g_shell_quote(workspace_dir_path);
+    gchar *quoted_sha = g_shell_quote(sha);
+    gchar *cmd = g_strdup_printf("git -C %s show %s", quoted_ws, quoted_sha);
+    g_free(quoted_ws);
+    g_free(quoted_sha);
+    
+    gchar *out = NULL;
+    gchar *err_out = NULL;
+    g_spawn_command_line_sync(cmd, &out, &err_out, NULL, NULL);
+    g_free(cmd);
+    g_free(err_out);
+    return out;
+}
 void       vcodex_git_commit_free (GitCommit *commit) {
     if (!commit) return;
     g_free(commit->sha); g_free(commit->short_sha);

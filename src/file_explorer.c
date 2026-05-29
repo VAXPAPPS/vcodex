@@ -2,6 +2,9 @@
 
 #include "file_explorer.h"
 #include "editor_tab.h"
+#include "explorer_context_menu.h"
+#include "explorer_dnd.h"
+#include "git_manager.h"
 #include "vcodex_window_private.h"
 
 /* ------------------------------------------------------------------ */
@@ -187,6 +190,9 @@ on_open_folder_clicked (GtkButton *button, AetherIdeWindow *self)
     if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_ACCEPT) {
         char *folder = gtk_file_chooser_get_filename (GTK_FILE_CHOOSER (dialog));
         aether_ide_window_set_workspace_dir (self, folder);
+        
+        /* Initialize Git Manager for the new workspace */
+        git_manager_init (folder);
 
         GtkTreeStore *tree_store = aether_ide_window_get_tree_store (self);
         gtk_tree_store_clear (tree_store);

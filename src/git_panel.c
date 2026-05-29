@@ -6,6 +6,7 @@ struct _AetherGitPanel {
 
     GtkWidget *commit_text_view;
     GtkWidget *commit_button;
+    GtkWidget *stage_all_button;
     GtkWidget *refresh_button;
     
     GtkWidget *tree_view;
@@ -62,6 +63,17 @@ on_refresh_clicked (GtkButton *btn, gpointer user_data)
 }
 
 static void
+on_stage_all_clicked (GtkButton *btn, gpointer user_data)
+{
+    g_print ("Staging all changes...\n");
+    if (git_manager_stage_all ()) {
+        g_print ("Staged all changes successfully.\n");
+    } else {
+        g_printerr ("Failed to stage changes.\n");
+    }
+}
+
+static void
 aether_git_panel_class_init (AetherGitPanelClass *klass)
 {
 }
@@ -86,12 +98,17 @@ aether_git_panel_init (AetherGitPanel *self)
     gtk_widget_set_tooltip_text (self->refresh_button, "Refresh");
     g_signal_connect (self->refresh_button, "clicked", G_CALLBACK(on_refresh_clicked), self);
     
+    self->stage_all_button = gtk_button_new_from_icon_name ("list-add-symbolic", GTK_ICON_SIZE_MENU);
+    gtk_widget_set_tooltip_text (self->stage_all_button, "Stage All Changes");
+    g_signal_connect (self->stage_all_button, "clicked", G_CALLBACK(on_stage_all_clicked), self);
+    
     self->commit_button = gtk_button_new_from_icon_name ("object-select-symbolic", GTK_ICON_SIZE_MENU);
     gtk_widget_set_tooltip_text (self->commit_button, "Commit");
     g_signal_connect (self->commit_button, "clicked", G_CALLBACK(on_commit_clicked), self);
     
     gtk_box_pack_start (GTK_BOX (action_box), lbl, TRUE, TRUE, 0);
     gtk_box_pack_start (GTK_BOX (action_box), self->refresh_button, FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (action_box), self->stage_all_button, FALSE, FALSE, 0);
     gtk_box_pack_start (GTK_BOX (action_box), self->commit_button, FALSE, FALSE, 0);
     
     /* Commit Message Area */
