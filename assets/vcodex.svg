@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f111a" />
+      <stop offset="100%" stop-color="#181a26" />
+    </linearGradient>
+
+    <!-- Border Gradient -->
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3a3f58" stop-opacity="0.8" />
+      <stop offset="50%" stop-color="#212536" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#141622" stop-opacity="0.9" />
+    </linearGradient>
+
+    <!-- Cyan Ribbon Gradient -->
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f0ff" />
+      <stop offset="100%" stop-color="#0072ff" />
+    </linearGradient>
+
+    <!-- Purple Ribbon Gradient -->
+    <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e000ff" />
+      <stop offset="100%" stop-color="#6a00ff" />
+    </linearGradient>
+
+    <!-- Central V Gradient (Cyan to Purple) -->
+    <linearGradient id="vGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f0ff" />
+      <stop offset="50%" stop-color="#7000ff" />
+      <stop offset="100%" stop-color="#e000ff" />
+    </linearGradient>
+
+    <!-- AI Sparkle Gradient -->
+    <linearGradient id="sparkleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#a0c8ff" />
+    </linearGradient>
+
+    <!-- Glow Filter -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="14" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <!-- Subtle Shadow for Background Squircle -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#000000" flood-opacity="0.6" />
+    </filter>
+  </defs>
+
+  <!-- Background Squircle with Shadow -->
+  <rect x="36" y="36" width="440" height="440" rx="108" fill="url(#bgGrad)" stroke="url(#borderGrad)" stroke-width="4" filter="url(#shadow)" />
+
+  <!-- Subtle Tech Grid Lines in Background -->
+  <g opacity="0.06" stroke="#ffffff" stroke-width="1.5">
+    <line x1="36" y1="146" x2="476" y2="146" />
+    <line x1="36" y1="256" x2="476" y2="256" />
+    <line x1="36" y1="366" x2="476" y2="366" />
+    <line x1="146" y1="36" x2="146" y2="476" />
+    <line x1="256" y1="36" x2="256" y2="476" />
+    <line x1="366" y1="36" x2="366" y2="476" />
+  </g>
+
+  <!-- Left Code Bracket "<" (Cyan Glow) -->
+  <path d="M 160 170 L 95 256 L 160 342" 
+        fill="none" 
+        stroke="url(#cyanGrad)" 
+        stroke-width="28" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" 
+        filter="url(#glow)" 
+        opacity="0.85" />
+
+  <!-- Right Code Bracket ">" (Purple Glow) -->
+  <path d="M 352 170 L 417 256 L 352 342" 
+        fill="none" 
+        stroke="url(#purpleGrad)" 
+        stroke-width="28" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" 
+        filter="url(#glow)" 
+        opacity="0.85" />
+
+  <!-- Central "V" shape (Connecting cyan to purple) -->
+  <path d="M 205 155 L 256 350 L 307 155" 
+        fill="none" 
+        stroke="url(#vGrad)" 
+        stroke-width="36" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" 
+        filter="url(#glow)" />
+
+  <!-- AI Sparkle/Star (Glowing Top-Right) -->
+  <path d="M 330 115 Q 330 135 350 135 Q 330 135 330 155 Q 330 135 310 135 Q 330 135 330 115 Z" 
+        fill="url(#sparkleGrad)" 
+        filter="url(#glow)" />
+</svg>

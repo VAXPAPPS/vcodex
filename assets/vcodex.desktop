@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Vcodex
+Comment=Modern AI-powered Code Editor
+GenericName=Code Editor
+Exec=vcodex %F
+Icon=vcodex
+Type=Application
+Terminal=false
+Categories=Development;TextEditor;IDE;GTK;
+MimeType=text/plain;text/x-chdr;text/x-csrc;text/x-c++hdr;text/x-c++src;text/x-java;text/x-python;application/javascript;text/html;text/css;
+StartupNotify=true
+StartupWMClass=vcodex
+Keywords=editor;code;coding;ide;ai;developer;
