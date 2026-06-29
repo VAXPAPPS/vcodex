@@ -59,6 +59,8 @@ struct _AetherIdeWindow {
     GtkTreeStore *tree_store;
     GtkTreeStore *search_store;
 
+    GtkWidget *explorer_label;
+
     gchar *current_workspace_dir;
 };
 
@@ -109,6 +111,14 @@ aether_ide_window_set_workspace_dir (AetherIdeWindow *self, const gchar *dir)
 {
     g_free (self->current_workspace_dir);
     self->current_workspace_dir = g_strdup (dir);
+
+    if (dir) {
+        gchar *basename = g_path_get_basename (dir);
+        gtk_label_set_text (GTK_LABEL (self->explorer_label), basename);
+        g_free (basename);
+    } else {
+        gtk_label_set_text (GTK_LABEL (self->explorer_label), "Explorer");
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -274,10 +284,10 @@ vcodex_window_init (AetherIdeWindow *self)
 
     /* Explorer page */
     self->explorer_page = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-    GtkWidget *explorer_label = gtk_label_new ("Explorer");
-    gtk_widget_set_margin_top    (explorer_label, 10);
-    gtk_widget_set_margin_bottom (explorer_label, 10);
-    gtk_box_pack_start (GTK_BOX (self->explorer_page), explorer_label, FALSE, FALSE, 0);
+    self->explorer_label = gtk_label_new ("Explorer");
+    gtk_widget_set_margin_top    (self->explorer_label, 10);
+    gtk_widget_set_margin_bottom (self->explorer_label, 10);
+    gtk_box_pack_start (GTK_BOX (self->explorer_page), self->explorer_label, FALSE, FALSE, 0);
 
     /* Search page */
     self->search_page = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
